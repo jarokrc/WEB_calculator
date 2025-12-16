@@ -40,17 +40,19 @@ def _format_supplier_block() -> list[str]:
 
 def build_invoice_payload(
     package: Package | None,
-    selections: Iterable[tuple[Service, int]],
+    selections: Iterable[tuple[Service, int] | tuple[Service, int, float]],
     client: dict,
     pricing: PricingEngine,
     vat_rate: float = 0.23,
     qr_data: Optional[str] = None,
     doc_title: str = "Cenova ponuka",
     discount_pct: float = 0.0,
+    original_package_price: float | None = None,
 ) -> dict:
     """
     Build structured payload for invoice PDF rendering.
     Zlava sa uplatnuje na sumu bez DPH.
+    - selections mozu obsahovat aj povodnu cenu: (service, qty, original_price).
     """
     selections = list(selections)
     breakdown = pricing.summarize(selections)
@@ -60,17 +62,32 @@ def build_invoice_payload(
     today = date.today().isoformat()
     invoice_no = today.replace("-", "")
 
+    base_original = original_package_price if original_package_price is not None else (package.base_price if package else 0.0)
+
     items = []
-    for svc, qty in selections:
+    extras_original = 0.0
+    for selection in selections:
+        if len(selection) == 3:
+            svc, qty, orig_price = selection  # type: ignore[misc]
+        else:
+            svc, qty = selection  # type: ignore[misc]
+            orig_price = svc.price
         line_total = svc.price * qty
+        original_total = float(orig_price) * qty
+        extras_original += original_total
         items.append(
             {
                 "name": svc.label,
+                "unit": svc.unit,
                 "qty": qty,
                 "unit_price": svc.price,
                 "total": line_total,
+                "original_unit_price": float(orig_price),
+                "original_total": original_total,
             }
         )
+
+    total_original_before_discount = base_original + extras_original
 
     return {
         "invoice_no": invoice_no,
@@ -88,6 +105,8 @@ def build_invoice_payload(
         "totals": {
             "base": breakdown.base,
             "extras": breakdown.extras,
+            "original_base": base_original,
+            "original_extras": extras_original,
             "discount_pct": discount_pct,
             "discount_amount": discount_amount,
             "total_before_discount": breakdown.total,
@@ -95,6 +114,7 @@ def build_invoice_payload(
             "vat": vat,
             "total_with_vat": subtotal_no_vat + vat,
             "vat_rate": vat_rate,
+            "original_total_before_discount": total_original_before_discount,
         },
         "items": items,
         "qr_data": qr_data,

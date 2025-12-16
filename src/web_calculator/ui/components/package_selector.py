@@ -3,6 +3,7 @@ from tkinter import ttk
 from typing import Callable, Optional
 
 from web_calculator.core.models.package import Package
+from web_calculator.ui.styles import theme
 
 
 class PackageSelector(ttk.Frame):
@@ -40,6 +41,7 @@ class PackageSelector(ttk.Frame):
         mode_box.bind("<<ComboboxSelected>>", lambda _e: self._change_mode(self._mode_var.get()))
 
         self._list = tk.Listbox(self, height=max(1, min(8, len(self._items))), activestyle="dotbox")
+        theme.style_listbox(self._list, theme.PALETTE)
         self._list.pack(fill="both", expand=True, pady=(4, 0))
 
         self._refresh_list()
@@ -101,12 +103,25 @@ class PackageSelector(ttk.Frame):
         self._on_price_mode_change(mode)
         self._on_select_internal()
 
+    def set_price_mode(self, mode: str) -> None:
+        """
+        Programmatically choose a price mode and keep the UI in sync.
+        """
+        target = mode if mode in {"base", "promo", "intra"} else "base"
+        if self._mode_var.get() == target:
+            return
+        self._mode_var.set(target)
+        self._change_mode(target)
+
     def _current_price(self, pkg: Package) -> float:
         if self._price_mode == "promo" and pkg.promo_price is not None:
             return pkg.promo_price
         if self._price_mode == "intra" and pkg.intra_price is not None:
             return pkg.intra_price
         return pkg.base_price
+
+    def update_theme(self, palette: dict) -> None:
+        theme.style_listbox(self._list, palette)
 
     def _selected_package(self) -> Package | None:
         selection = self._list.curselection()

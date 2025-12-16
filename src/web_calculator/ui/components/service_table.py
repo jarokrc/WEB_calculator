@@ -59,7 +59,7 @@ class ServiceTable(ttk.Frame):
         tree.column("price", width=90, anchor="e")
         tree.column("total", width=100, anchor="e")
         tree.column("tag", width=90, anchor="center")
-        tree.tag_configure("selected", background="#e8f2ff")
+        tree.tag_configure("selected", background="#0e2235")
         tree.pack(side="left", fill="both", expand=True)
         scrollbar = ttk.Scrollbar(container, orient="vertical", command=tree.yview)
         scrollbar.pack(side="right", fill="y")

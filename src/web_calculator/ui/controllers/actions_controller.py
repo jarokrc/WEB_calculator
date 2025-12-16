@@ -45,6 +45,7 @@ class ActionsController:
             "quantities": self.w._service_qty,
             "client": client,
             "discount_pct": self.w._discount_pct,
+            "price_mode": getattr(self.w, "_price_mode", "base"),
         }
         path.write(json.dumps(data, ensure_ascii=False, indent=2))
         path.close()
@@ -61,6 +62,8 @@ class ActionsController:
             data = json.load(path)
         finally:
             path.close()
+        price_mode = str(data.get("price_mode") or "base")
+        self.w.package_selector.set_price_mode(price_mode)
         pkg_code = data.get("package")
         self.w.package_selector.select_package(pkg_code)
         self.w._selected_services = set(data.get("services", []))
@@ -82,20 +85,38 @@ class ActionsController:
         )
         if not path:
             return
+        out_path = Path(path)
 
-        selections = [
-            (self.w._services.with_effective_price(s), self.w._service_qty.get(s.code, 1))
-            for s in self.w._catalog.services
-            if s.code in self.w._selected_services
-        ]
+        selections = []
+        for s in self.w._catalog.services:
+            if s.code not in self.w._selected_services:
+                continue
+            eff = self.w._services.with_effective_price(s)
+            qty = self.w._service_qty.get(s.code, 1)
+            original_price = self.w._base_prices.get(s.code, (s.price, s.price2))[0]
+            selections.append((eff, qty, original_price))
+
         payload = build_invoice_payload(
             self.w._current_package,
             selections,
             self.w.client_form.data(),
             self.w._pricing,
             discount_pct=self.w._discount_pct,
+            original_package_price=self.w._current_package_raw.base_price if self.w._current_package_raw else None,
         )
-        export_simple_pdf(Path(path), payload)
+        try:
+            export_simple_pdf(out_path, payload)
+        except PermissionError:
+            messagebox.showerror(
+                "Export PDF",
+                "Export zlyhal: subor je pravdepodobne otvoreny alebo zamknuty.\n"
+                "Zatvor PDF prehliadac alebo zvol iny nazov umiestnenia a skus znova.",
+            )
+            return
+        except Exception as exc:  # pragma: no cover (UI feedback)
+            messagebox.showerror("Export PDF", f"Export zlyhal:\n{exc}")
+            return
+        messagebox.showinfo("Export PDF", f"PDF ulozene:\n{out_path}")
 
     def reset_selection(self) -> None:
         self.w._selected_services.clear()
@@ -106,5 +127,5 @@ class ActionsController:
         self.w._discount_pct = 0.0
         self.w.package_selector.select_none()
         self.w.service_area.refresh_selection(self.w._selected_services, self.w._service_qty)
-        self.w._update_summary()
+        self.w._services.update_summary()
         self.update_save_buttons()

@@ -12,7 +12,7 @@ from web_calculator.ui.layouts.client_form import ClientForm
 from web_calculator.ui.layouts.actions_bar import ActionsBar
 from web_calculator.ui.components.package_selector import PackageSelector
 from web_calculator.ui.components.summary_panel import SummaryPanel
-from web_calculator.ui.styles.theme import apply_theme
+from web_calculator.ui.styles import theme
 from web_calculator.ui.controllers.actions_controller import ActionsController
 from web_calculator.ui.controllers.service_controller import ServiceController
 
@@ -20,7 +20,8 @@ from web_calculator.ui.controllers.service_controller import ServiceController
 class MainWindow(tk.Tk):
     def __init__(self, catalog: Catalog):
         super().__init__()
-        apply_theme(self)
+        self._theme_name = "dark_futuristic"
+        self._palette = theme.apply_theme(self, self._theme_name)
         self.title("WEB kalkulacka")
         self.geometry("1024x780")
         self.minsize(900, 650)
@@ -78,6 +79,8 @@ class MainWindow(tk.Tk):
             on_help=self._services.show_help,
             on_preview=self._services.show_preview,
             on_search=self._open_search,
+            on_theme_change=self._set_theme,
+            theme_names=list(theme.THEMES.keys()),
         )
 
         # Default to "no package" so doplnky mozno pouzit samostatne.
@@ -100,6 +103,7 @@ class MainWindow(tk.Tk):
         list_frame = ttk.Frame(frame)
         list_frame.pack(fill="both", expand=True)
         listbox = tk.Listbox(list_frame, selectmode=tk.MULTIPLE, activestyle="dotbox")
+        theme.style_listbox(listbox, self._palette)
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=listbox.yview)
         listbox.configure(yscrollcommand=scrollbar.set)
         listbox.pack(side="left", fill="both", expand=True)
@@ -147,7 +151,7 @@ class MainWindow(tk.Tk):
             dialog.destroy()
 
         ttk.Button(buttons, text="Zrusit", command=dialog.destroy).pack(side="right", padx=(6, 0))
-        ttk.Button(buttons, text="Ulozit", command=save_and_close).pack(side="right")
+        ttk.Button(buttons, text="Ulozit", command=save_and_close, style="Accent.TButton").pack(side="right")
 
 
 
@@ -158,3 +162,8 @@ class MainWindow(tk.Tk):
 
     def _open_search(self) -> None:
         self._services.open_search()
+
+    def _set_theme(self, name: str) -> None:
+        self._theme_name = name
+        self._palette = theme.apply_theme(self, name)
+        self.package_selector.update_theme(self._palette)

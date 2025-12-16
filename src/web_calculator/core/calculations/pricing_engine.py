@@ -25,18 +25,21 @@ class PricingEngine:
     def update_package(self, package: Package | None) -> None:
         self.package = package
 
-    def summarize(self, services: Iterable[tuple[Service, float] | Service]) -> PricingBreakdown:
+    def summarize(self, services: Iterable[tuple | Service]) -> PricingBreakdown:
         """
-        Ak je zaznam tuple (service, qty), pouzije mnozstvo; inak qty=1.
+        Ak je zaznam tuple (service, qty [, original_price]), pouzije mnozstvo; inak qty=1.
         """
         base = self.package.base_price if self.package else 0.0
         extras = 0.0
         for item in services:
             if isinstance(item, tuple):
-                service, qty = item
-                extras += service.price * float(qty)
+                if len(item) >= 2:
+                    service, qty = item[0], item[1]
+                else:
+                    service, qty = item[0], 1
+                extras += float(service.price) * float(qty)
             else:
-                extras += item.price
+                extras += float(item.price)
         return PricingBreakdown(base=base, extras=extras)
 
     @staticmethod
