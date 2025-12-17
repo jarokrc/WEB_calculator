@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import json
+import tkinter as tk
 from dataclasses import replace
 from pathlib import Path
-from tkinter import messagebox, simpledialog
+from tkinter import messagebox, simpledialog, ttk
 from typing import Iterable, Set
 
 from web_calculator.core.models.package import Package
 from web_calculator.core.models.service import Service
 from web_calculator.core.services.catalog import save_catalog, save_packages
 from web_calculator.core.services.invoice import build_invoice_payload
+from web_calculator.ui.components.service_editor_window import ServiceEditorWindow
 from web_calculator.ui.components.preview_dialog import PreviewDialog
 from web_calculator.ui.components.search_dialog import SearchDialog
 
@@ -66,7 +68,7 @@ class ServiceController:
         self.w.service_area.set_services(
             primary_sorted, eshop_sorted, backend_sorted, self.w._selected_services, self.w._service_qty
         )
-        self.w.service_area._apply_expand_layout()
+        self._refresh_service_editor_windows()
 
     def on_service_toggle(self, service: Service, selected: bool) -> None:
         if selected:
@@ -75,6 +77,7 @@ class ServiceController:
         else:
             self.w._selected_services.discard(service.code)
         self.w.service_area.refresh_selection(self.w._selected_services, self.w._service_qty)
+        self._refresh_service_editor_windows()
         self.update_summary()
 
     def on_filter_header(self, field: str) -> None:
@@ -138,6 +141,7 @@ class ServiceController:
         save_catalog(self.w._catalog)
         self.refresh_service_tables(self.w._current_package)
         self.update_summary()
+        self._refresh_service_editor_windows()
 
     def edit_service_qty(self, _section: str, service: Service) -> None:
         current = self.w._service_qty.get(service.code, 1)
@@ -160,11 +164,150 @@ class ServiceController:
         self.w._service_qty[service.code] = qty
         self.w._selected_services.add(service.code)
         self.w.service_area.refresh_selection(self.w._selected_services, self.w._service_qty)
+        self._refresh_service_editor_windows()
         self.update_summary()
 
     def show_service_info(self, service: Service) -> None:
         info = service.info or "(bez popisu)"
         messagebox.showinfo("Info sluzby", f"{service.label}\n\n{info}")
+
+    # -------- Service editor window --------
+    def open_section_window(self, section_id: str) -> None:
+        existing = getattr(self.w, "_service_editor_windows", {}).get(section_id)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.deiconify()
+                    existing.lift()
+                    existing.focus_force()
+                    return
+            except Exception:
+                pass
+
+        title_map = {
+            "primary": "Primarne doplnky",
+            "eshop": "E-shop doplnky",
+            "backend": "Backend / bezpecnost",
+        }
+        title = title_map.get(section_id, f"Sluzby: {section_id}")
+
+        def on_close(sec: str) -> None:
+            try:
+                self.w._service_editor_windows.pop(sec, None)
+            except Exception:
+                pass
+
+        win = ServiceEditorWindow(
+            self.w,
+            section_id=section_id,
+            title=title,
+            services=self._services_for_section(section_id),
+            selected=set(self.w._selected_services),
+            quantities=dict(self.w._service_qty),
+            on_toggle=self.on_service_toggle,
+            on_edit_qty=lambda svc: self.edit_service_qty(section_id, svc),
+            on_edit_price=self.edit_service_price,
+            on_edit_details=self.edit_service_details,
+            price_provider=self.effective_price,
+            on_close=on_close,
+        )
+        self.w._service_editor_windows[section_id] = win
+
+    def _refresh_service_editor_windows(self) -> None:
+        windows = getattr(self.w, "_service_editor_windows", {})
+        for section_id, win in list(windows.items()):
+            try:
+                if not win.winfo_exists():
+                    windows.pop(section_id, None)
+                    continue
+                refresh = getattr(win, "refresh", None)
+                if callable(refresh):
+                    refresh(self._services_for_section(section_id), set(self.w._selected_services), dict(self.w._service_qty))
+            except Exception:
+                continue
+
+    def _services_for_section(self, section_id: str) -> list[Service]:
+        all_services: list[Service] = [
+            s for s in self.w._catalog.services if self._matches_filters(s) and s.code not in self.w._hidden_service_codes
+        ]
+        if section_id == "primary":
+            services = [s for s in all_services if (s.source or "").upper() == "PRIMARY"]
+        elif section_id == "eshop":
+            services = [s for s in all_services if (s.source or "").upper().startswith("ESHOP")]
+        elif section_id == "backend":
+            services = [s for s in all_services if (s.source or "").upper() == "WEB"]
+        else:
+            services = all_services
+        return self._apply_sort(services)
+
+    def edit_service_details(self, service: Service) -> None:
+        dialog = tk.Toplevel(self.w)
+        dialog.title("Upravit sluzbu")
+        dialog.transient(self.w)
+        dialog.grab_set()
+        dialog.geometry("620x520")
+        dialog.minsize(560, 460)
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(1, weight=1)
+        frame.rowconfigure(6, weight=1)
+
+        ttk.Label(frame, text="Kod").grid(row=0, column=0, sticky="w")
+        code_var = tk.StringVar(value=service.code)
+        ttk.Entry(frame, textvariable=code_var, state="readonly").grid(row=0, column=1, sticky="ew")
+
+        ttk.Label(frame, text="Nazov").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        label_var = tk.StringVar(value=service.label or "")
+        ttk.Entry(frame, textvariable=label_var).grid(row=1, column=1, sticky="ew", pady=(6, 0))
+
+        ttk.Label(frame, text="Cena (price)").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        price_var = tk.StringVar(value=f"{float(service.price):.2f}")
+        ttk.Entry(frame, textvariable=price_var).grid(row=2, column=1, sticky="ew", pady=(6, 0))
+
+        ttk.Label(frame, text="Cena pri baliku (price2)").grid(row=3, column=0, sticky="w", pady=(6, 0))
+        price2_var = tk.StringVar(value=f"{float(service.price2):.2f}")
+        ttk.Entry(frame, textvariable=price2_var).grid(row=3, column=1, sticky="ew", pady=(6, 0))
+
+        ttk.Label(frame, text="Tag").grid(row=4, column=0, sticky="w", pady=(6, 0))
+        tag_var = tk.StringVar(value=service.tag or "")
+        ttk.Entry(frame, textvariable=tag_var).grid(row=4, column=1, sticky="ew", pady=(6, 0))
+
+        ttk.Label(frame, text="Info / popis").grid(row=5, column=0, sticky="w", pady=(6, 0))
+        info = tk.Text(frame, height=8, wrap="word")
+        info.grid(row=6, column=0, columnspan=2, sticky="nsew")
+        info.insert("1.0", service.info or "")
+
+        btns = ttk.Frame(frame)
+        btns.grid(row=7, column=0, columnspan=2, sticky="e", pady=(10, 0))
+
+        def save() -> None:
+            raw_label = (label_var.get() or "").strip()
+            if not raw_label:
+                messagebox.showerror("Chyba", "Nazov sluzby nemoze byt prazdny.", parent=dialog)
+                return
+            try:
+                new_price = float((price_var.get() or "0").strip().replace(",", "."))
+                new_price2 = float((price2_var.get() or "0").strip().replace(",", "."))
+            except ValueError:
+                messagebox.showerror("Chyba", "Zadaj platne cisla pre ceny.", parent=dialog)
+                return
+
+            service.label = raw_label
+            service.price = new_price
+            service.price2 = new_price2
+            service.tag = (tag_var.get() or "").strip()
+            service.info = (info.get("1.0", "end") or "").strip()
+
+            self.w._base_prices[service.code] = (float(service.price), float(service.price2))
+            save_catalog(self.w._catalog)
+            self.refresh_service_tables(self.w._current_package)
+            self.update_summary()
+            self._refresh_service_editor_windows()
+            dialog.destroy()
+
+        ttk.Button(btns, text="Zrusit", command=dialog.destroy).pack(side="right", padx=(6, 0))
+        ttk.Button(btns, text="Ulozit", command=save, style="Accent.TButton").pack(side="right")
 
     def show_selected_service_info(self) -> None:
         selected = list(self.w._selected_services)
@@ -227,22 +370,22 @@ class ServiceController:
 
         pkg_code = (self.w._current_package.code or "").upper()
         included_set = self.included_services_for(self.w._current_package)
+
+        # Services explicitly included in the selected package use the package price (`price2`).
+        # If `included_quantities` defines a free quota, only the paid remainder uses base price.
         included_qty = self._included_qty_map().get(service.code, 0)
-        if included_qty > 0 and qty > 0 and service.code in included_set:
-            paid_qty = max(0, qty - included_qty)
-            total_cost = paid_qty * base_price
-            return total_cost / qty if qty > 0 else base_price
-
-        bundle_match = (service.bundle or "NONE").upper()
-        if bundle_match != "NONE" and pkg_code.startswith(bundle_match) and service.code in included_set:
-            return alt_price if alt_price is not None else 0.0
-
-        if pkg_code.startswith("ESHOP-P"):
-            included_set |= set(self.w._eshop_advanced_included)
-        elif pkg_code.startswith("ESHOP-Z"):
-            included_set |= set(self.w._eshop_basic_included)
         if service.code in included_set:
+            if included_qty > 0 and qty > 0:
+                paid_qty = max(0, qty - included_qty)
+                total_cost = paid_qty * base_price
+                return total_cost / qty if qty > 0 else base_price
+            # Fully included in package => free.
             return 0.0
+
+        # Optional bundle discount: show/apply alternative price when the service declares a bundle match.
+        bundle_match = (service.bundle or "NONE").upper()
+        if bundle_match != "NONE" and pkg_code.startswith(bundle_match):
+            return float(alt_price)
         return base_price
 
     def _matches_filters(self, service: Service) -> bool:
@@ -253,7 +396,6 @@ class ServiceController:
     def included_services_for(self, package: Package | None) -> Set[str]:
         if not package:
             return set()
-        code = (package.code or "").upper()
         return set(package.included_services or [])
 
     def apply_included_services(self, package: Package | None) -> None:

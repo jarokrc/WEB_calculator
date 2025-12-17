@@ -11,6 +11,8 @@ class ServiceTable(ttk.Frame):
     Podporuje triedenie, filter, zobrazenie info a editaciu ceny/mnozstva na dvojklik.
     """
 
+    _mousewheel_bound: bool = False
+
     def __init__(
         self,
         master: tk.Misc,
@@ -41,11 +43,13 @@ class ServiceTable(ttk.Frame):
 
         header = ttk.Label(self, text=title, font=("Segoe UI", 10, "bold"), cursor="hand2")
         header.pack(anchor="w")
-        header.bind("<Button-1>", lambda _e: self._on_expand(self._table_id))
+        header.bind("<Button-1>", self._on_header_click)
+        header.bind("<Enter>", lambda _e: self._tree.focus_set())
 
         columns = ("check", "label", "qty", "price", "total", "tag")
         container = ttk.Frame(self)
         container.pack(fill="both", expand=True, pady=(4, 0))
+        container.bind("<Enter>", lambda _e: self._tree.focus_set())
         tree = ttk.Treeview(container, columns=columns, show="headings", selectmode="none", height=12)
         tree.heading("check", text="[ ]")
         tree.heading("label", text="Sluzba", command=lambda: self._on_sort("label"))
@@ -63,11 +67,21 @@ class ServiceTable(ttk.Frame):
         tree.pack(side="left", fill="both", expand=True)
         scrollbar = ttk.Scrollbar(container, orient="vertical", command=tree.yview)
         scrollbar.pack(side="right", fill="y")
+        scrollbar.bind("<Enter>", lambda _e: tree.focus_set())
         tree.configure(yscrollcommand=scrollbar.set)
         self._tree = tree
 
         tree.bind("<ButtonRelease-1>", self._on_click)
         tree.bind("<Double-1>", self._on_double_click)
+        tree.bind("<Enter>", lambda _e: tree.focus_set())
+
+        # If cursor enters the surrounding frame, keep wheel scrolling working by focusing the Treeview.
+        self.bind("<Enter>", lambda _e: self._tree.focus_set())
+
+        # Robust wheel scrolling: on Windows the wheel event often goes to the focused widget.
+        # Binding globally and routing by pointer position makes it work consistently in both
+        # normal and expanded layouts.
+        self._ensure_mousewheel_binding()
 
     def set_services(self, services: Iterable[Service], selected: Set[str], quantities: dict[str, float]) -> None:
         self._services = list(services)
@@ -141,6 +155,69 @@ class ServiceTable(ttk.Frame):
             self._on_edit_price(svc)
         else:
             self._on_info(svc)
+
+    def _on_header_click(self, _event: tk.Event) -> None:
+        self._tree.focus_set()
+        self._on_expand(self._table_id)
+
+    def focus_tree(self) -> None:
+        self._tree.focus_set()
+
+    def _ensure_mousewheel_binding(self) -> None:
+        if ServiceTable._mousewheel_bound:
+            return
+        root = self.winfo_toplevel()
+        root.bind_all("<MouseWheel>", ServiceTable._on_mousewheel_all, add="+")
+        root.bind_all("<Button-4>", ServiceTable._on_mousewheel_linux_all, add="+")
+        root.bind_all("<Button-5>", ServiceTable._on_mousewheel_linux_all, add="+")
+        ServiceTable._mousewheel_bound = True
+
+    @staticmethod
+    def _find_service_tree_under_pointer(event: tk.Event) -> ttk.Treeview | None:
+        # Use pointer position from the toplevel; the event widget may be unrelated to the pointer target.
+        try:
+            root = event.widget.winfo_toplevel()
+            x_root = int(root.winfo_pointerx())
+            y_root = int(root.winfo_pointery())
+            widget = root.winfo_containing(x_root, y_root)
+        except Exception:
+            return None
+        while widget is not None:
+            if isinstance(widget, ttk.Treeview):
+                return widget if widget.winfo_viewable() else None
+            if isinstance(widget, ServiceTable):
+                if not widget.winfo_viewable():
+                    return None
+                return widget._tree if widget._tree.winfo_viewable() else None
+            widget = widget.master  # type: ignore[assignment]
+        return None
+
+    @staticmethod
+    def _on_mousewheel_all(event: tk.Event) -> str:
+        tree = ServiceTable._find_service_tree_under_pointer(event)
+        if tree is None:
+            return ""
+        delta = getattr(event, "delta", 0) or 0
+        if not delta:
+            return ""
+        steps = int(abs(delta) / 120) or 1
+        direction = -1 if delta > 0 else 1
+        tree.yview_scroll(direction * steps, "units")
+        return "break"
+
+    @staticmethod
+    def _on_mousewheel_linux_all(event: tk.Event) -> str:
+        tree = ServiceTable._find_service_tree_under_pointer(event)
+        if tree is None:
+            return ""
+        num = getattr(event, "num", None)
+        if num == 4:
+            tree.yview_scroll(-1, "units")
+            return "break"
+        if num == 5:
+            tree.yview_scroll(1, "units")
+            return "break"
+        return ""
 
     @staticmethod
     def _format_qty(qty: float) -> str:

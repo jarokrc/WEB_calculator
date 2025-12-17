@@ -39,6 +39,7 @@ class MainWindow(tk.Tk):
         self._base_prices: dict[str, tuple[float, float]] = {s.code: (s.price, s.price2) for s in catalog.services}
         self._auto_selected: Set[str] = set()
         self._hidden_service_codes: Set[str] = {"ESHOP-E-SHOP-MODUL-ZAKLAD"}
+        self._service_editor_windows: dict[str, tk.Toplevel] = {}
 
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
@@ -62,6 +63,8 @@ class MainWindow(tk.Tk):
             self._services.show_service_info,
             self._services.edit_service_price,
             self._services.edit_service_qty,
+            self._services.open_section_window,
+            self._services.reset_filters,
             price_provider=self._services.effective_price,
         )
 

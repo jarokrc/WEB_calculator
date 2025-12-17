@@ -88,6 +88,7 @@ def build_invoice_payload(
         )
 
     total_original_before_discount = base_original + extras_original
+    original_services_total = extras_original
 
     return {
         "invoice_no": invoice_no,
@@ -107,6 +108,9 @@ def build_invoice_payload(
             "extras": breakdown.extras,
             "original_base": base_original,
             "original_extras": extras_original,
+            # Original services total is calculated "bez balika" (sum of service base prices).
+            # This value is used for the "povodna cena sluzieb" comparison in PDF.
+            "original_services_total": original_services_total,
             "discount_pct": discount_pct,
             "discount_amount": discount_amount,
             "total_before_discount": breakdown.total,

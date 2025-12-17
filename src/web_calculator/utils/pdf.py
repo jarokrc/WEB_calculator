@@ -5,15 +5,233 @@ Minimal implementation (no external deps).
 
 from __future__ import annotations
 
+import os
+import struct
 import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 from textwrap import wrap
-from typing import Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
 from web_calculator.utils.qr import make_qr_matrix
 
 
 # -------- Helpers --------
+_FONT_MAP: dict[str, "TrueTypeFont"] = {}
+
+
+@dataclass(frozen=True)
+class _TtfTables:
+    cmap: tuple[int, int]
+    head: tuple[int, int]
+    hhea: tuple[int, int]
+    hmtx: tuple[int, int]
+    maxp: tuple[int, int]
+
+
+class TrueTypeFont:
+    def __init__(self, path: Path, pdf_name: str):
+        self.path = path
+        self.pdf_name = pdf_name  # Name object, e.g. "/SegoeUI"
+        self.data = path.read_bytes()
+        self.tables = self._parse_tables(self.data)
+
+        head_offset, _ = self.tables.head
+        self.units_per_em = struct.unpack_from(">H", self.data, head_offset + 18)[0]
+        x_min, y_min, x_max, y_max = struct.unpack_from(">hhhh", self.data, head_offset + 36)
+        self.bbox = (x_min, y_min, x_max, y_max)
+
+        hhea_offset, _ = self.tables.hhea
+        self.ascent, self.descent = struct.unpack_from(">hh", self.data, hhea_offset + 4)
+        self.number_of_hmetrics = struct.unpack_from(">H", self.data, hhea_offset + 34)[0]
+
+        maxp_offset, _ = self.tables.maxp
+        self.num_glyphs = struct.unpack_from(">H", self.data, maxp_offset + 4)[0]
+
+        self._advance_widths = self._load_advance_widths()
+        self._cmap_lookup = self._build_cmap_lookup()
+        self.used_gids: set[int] = set()
+
+    @staticmethod
+    def _parse_tables(data: bytes) -> _TtfTables:
+        if len(data) < 12:
+            raise ValueError("Invalid TTF (too small)")
+        num_tables = struct.unpack_from(">H", data, 4)[0]
+        directory_offset = 12
+        entries: dict[str, tuple[int, int]] = {}
+        for i in range(num_tables):
+            base = directory_offset + i * 16
+            tag = data[base : base + 4].decode("ascii", "replace")
+            offset = struct.unpack_from(">I", data, base + 8)[0]
+            length = struct.unpack_from(">I", data, base + 12)[0]
+            entries[tag] = (offset, length)
+
+        required = ["cmap", "head", "hhea", "hmtx", "maxp"]
+        missing = [t for t in required if t not in entries]
+        if missing:
+            raise ValueError(f"TTF missing tables: {', '.join(missing)}")
+        return _TtfTables(
+            cmap=entries["cmap"],
+            head=entries["head"],
+            hhea=entries["hhea"],
+            hmtx=entries["hmtx"],
+            maxp=entries["maxp"],
+        )
+
+    def _load_advance_widths(self) -> list[int]:
+        hmtx_offset, _ = self.tables.hmtx
+        widths: list[int] = []
+        count = min(self.number_of_hmetrics, self.num_glyphs)
+        for i in range(count):
+            adv = struct.unpack_from(">H", self.data, hmtx_offset + i * 4)[0]
+            widths.append(int(adv))
+        if not widths:
+            widths = [int(self.units_per_em)]
+        if len(widths) < self.num_glyphs:
+            widths.extend([widths[-1]] * (self.num_glyphs - len(widths)))
+        return widths
+
+    def width_1000(self, gid: int) -> int:
+        if gid < 0 or gid >= len(self._advance_widths):
+            return 500
+        adv = self._advance_widths[gid]
+        return max(0, int(round((adv * 1000.0) / float(self.units_per_em or 1000))))
+
+    def glyph_id(self, codepoint: int) -> int:
+        gid = self._cmap_lookup(codepoint)
+        if gid is None:
+            return 0
+        if gid < 0 or gid >= self.num_glyphs:
+            return 0
+        return int(gid)
+
+    def encode_text_hex(self, text: str) -> str:
+        out = bytearray()
+        for ch in str(text):
+            gid = self.glyph_id(ord(ch))
+            self.used_gids.add(gid)
+            out += int(gid).to_bytes(2, "big", signed=False)
+        return out.hex().upper()
+
+    def _build_cmap_lookup(self) -> Callable[[int], int | None]:
+        cmap_offset, _ = self.tables.cmap
+        version, num_tables = struct.unpack_from(">HH", self.data, cmap_offset)
+        if version != 0 or num_tables <= 0:
+            raise ValueError("Invalid cmap table")
+
+        records = []
+        for i in range(num_tables):
+            base = cmap_offset + 4 + i * 8
+            platform_id, encoding_id, sub_offset = struct.unpack_from(">HHI", self.data, base)
+            records.append((platform_id, encoding_id, sub_offset))
+
+        preferred = [
+            (3, 10),  # Windows, Unicode full repertoire (format 12)
+            (3, 1),  # Windows, Unicode BMP (format 4)
+            (0, 4),  # Unicode platform
+            (0, 3),
+            (0, 2),
+            (0, 1),
+        ]
+        chosen = None
+        for pid, eid in preferred:
+            match = next((r for r in records if r[0] == pid and r[1] == eid), None)
+            if match:
+                chosen = match
+                break
+        if not chosen:
+            chosen = records[0]
+
+        _, _, sub_offset = chosen
+        subtable_start = cmap_offset + sub_offset
+        fmt = struct.unpack_from(">H", self.data, subtable_start)[0]
+        if fmt == 4:
+            return self._parse_cmap_format4(subtable_start)
+        if fmt == 12:
+            return self._parse_cmap_format12(subtable_start)
+        raise ValueError(f"Unsupported cmap format: {fmt}")
+
+    def _parse_cmap_format4(self, start: int) -> Callable[[int], int | None]:
+        seg_count_x2 = struct.unpack_from(">H", self.data, start + 6)[0]
+        seg_count = int(seg_count_x2 // 2)
+        end_codes_offset = start + 14
+        end_codes = list(struct.unpack_from(f">{seg_count}H", self.data, end_codes_offset))
+        start_codes_offset = end_codes_offset + 2 * seg_count + 2
+        start_codes = list(struct.unpack_from(f">{seg_count}H", self.data, start_codes_offset))
+        id_delta_offset = start_codes_offset + 2 * seg_count
+        id_deltas = list(struct.unpack_from(f">{seg_count}h", self.data, id_delta_offset))
+        id_range_offset_offset = id_delta_offset + 2 * seg_count
+        id_range_offsets = list(struct.unpack_from(f">{seg_count}H", self.data, id_range_offset_offset))
+
+        def lookup(codepoint: int) -> int | None:
+            if codepoint < 0 or codepoint > 0xFFFF:
+                return None
+            c = int(codepoint)
+            for i in range(seg_count):
+                if start_codes[i] <= c <= end_codes[i]:
+                    ro = id_range_offsets[i]
+                    if ro == 0:
+                        return (c + id_deltas[i]) & 0xFFFF
+                    glyph_index_addr = id_range_offset_offset + 2 * i + ro + 2 * (c - start_codes[i])
+                    if glyph_index_addr + 2 > len(self.data):
+                        return None
+                    glyph_index = struct.unpack_from(">H", self.data, glyph_index_addr)[0]
+                    if glyph_index == 0:
+                        return 0
+                    return (glyph_index + id_deltas[i]) & 0xFFFF
+            return None
+
+        return lookup
+
+    def _parse_cmap_format12(self, start: int) -> Callable[[int], int | None]:
+        # format (2), reserved (2), length (4), language (4), nGroups (4)
+        n_groups = struct.unpack_from(">I", self.data, start + 12)[0]
+        groups_offset = start + 16
+        groups: list[tuple[int, int, int]] = []
+        for i in range(n_groups):
+            base = groups_offset + i * 12
+            start_char, end_char, start_gid = struct.unpack_from(">III", self.data, base)
+            groups.append((start_char, end_char, start_gid))
+
+        def lookup(codepoint: int) -> int | None:
+            c = int(codepoint)
+            for start_char, end_char, start_gid in groups:
+                if start_char <= c <= end_char:
+                    return int(start_gid + (c - start_char))
+            return None
+
+        return lookup
+
+
+def _try_load_unicode_fonts() -> dict[str, TrueTypeFont]:
+    """
+    Try to load a Unicode-capable TrueType font (Windows), so PDF can render diacritics.
+    Falls back to ASCII-only mode if unavailable.
+    """
+    override = os.environ.get("WEB_CALCULATOR_PDF_FONT")
+    base_dir = Path(override) if override else None
+    candidates: list[tuple[Path, Path]] = []
+    if base_dir and base_dir.is_dir():
+        candidates.append((base_dir / "regular.ttf", base_dir / "bold.ttf"))
+    # Windows defaults
+    candidates.append((Path(r"C:\Windows\Fonts\segoeui.ttf"), Path(r"C:\Windows\Fonts\segoeuib.ttf")))
+    candidates.append((Path(r"C:\Windows\Fonts\arial.ttf"), Path(r"C:\Windows\Fonts\arialbd.ttf")))
+
+    for regular_path, bold_path in candidates:
+        try:
+            if not regular_path.exists() or not bold_path.exists():
+                continue
+            regular = TrueTypeFont(regular_path, pdf_name="/UnicodeRegular")
+            bold = TrueTypeFont(bold_path, pdf_name="/UnicodeBold")
+            # ensure space is tracked for widths defaults
+            regular.used_gids.add(regular.glyph_id(ord(" ")))
+            bold.used_gids.add(bold.glyph_id(ord(" ")))
+            return {"/F1": regular, "/F2": bold}
+        except Exception:
+            continue
+    return {}
+
+
 def _normalize_ascii(text: str) -> str:
     """Remove diacritics to stay compatible with built-in PDF Type1 fonts."""
     normalized = unicodedata.normalize("NFKD", str(text))
@@ -37,8 +255,13 @@ def _draw_text(lines: Iterable[str], x: int, y: int, font: str, size: int, leadi
     out = []
     spacing = leading or (size + 2)
     for line in lines:
-        safe = _escape_pdf_text(str(line))
-        out.append(f"BT {font} {size} Tf {x} {y} Td ({safe}) Tj ET\n")
+        text = str(line)
+        if font in _FONT_MAP:
+            hex_text = _FONT_MAP[font].encode_text_hex(text)
+            out.append(f"BT {font} {size} Tf {x} {y} Td <{hex_text}> Tj ET\n")
+        else:
+            safe = _escape_pdf_text(text)
+            out.append(f"BT {font} {size} Tf {x} {y} Td ({safe}) Tj ET\n")
         y -= spacing
     return "".join(out)
 
@@ -73,27 +296,40 @@ def _draw_price_line(label: str, value: float, orig: float | None, x: int, y: in
     Draw price label; if orig provided and different, draw muted orig one line above.
     """
     parts = []
-    if orig is not None and abs(orig - value) > 0.01:
-        orig_text = f"{label}: {_format_currency(orig)}"
-        muted_size = int(size * 0.8)
-        parts.append(_draw_text([orig_text], x, y + size + 4, font, muted_size))
-        strike_len = len(orig_text) * (muted_size * 0.52)
-        line_y = y + size + 4 + muted_size * 0.3
-        parts.append(f"0.55 0.55 0.55 RG {muted_size * 0.05:.2f} w {x} {line_y:.2f} m {x + strike_len:.2f} {line_y:.2f} l S\n")
+    # if orig is not None and abs(orig - value) > 0.01:
+    #     orig_text = f"{label}: {_format_currency(orig)}"
+    #     muted_size = int(size * 0.8)
+    #     parts.append(_draw_text([orig_text], x, y + size + 4, font, muted_size))
+    #     strike_len = len(orig_text) * (muted_size * 0.52)
+    #     line_y = y + size + 4 + muted_size * 0.3
+    #     parts.append(f"0.55 0.55 0.55 RG {muted_size * 0.05:.2f} w {x} {line_y:.2f} m {x + strike_len:.2f} {line_y:.2f} l S\n")
     parts.append(_draw_text([f"{label}: {_format_currency(value)}"], x, y, font, size))
     return "".join(parts)
 
 
 def _draw_price_cell(current: float, original: float | None, x: int, y: int, font: str, size: int) -> str:
-    if original is not None:
-        orig_font_size = int(size * 0.8)
+    if original is not None and abs(original - current) > 0.01:
+        orig_font_size = max(6, int(size * 0.8))
         orig_color = "0.55 0.55 0.55"
-        orig_text = f"{orig_color} rg {orig_color} RG " + _draw_text([_format_currency(original)], x, y + size + 4, font, orig_font_size)
-        # strike line over original
-        strike_len = len(_format_currency(original)) * (orig_font_size * 0.55)
-        line_y = y + size + 4 + orig_font_size * 0.3
-        strike = f"{orig_color} RG {orig_font_size * 0.05:.2f} w {x} {line_y:.2f} m {x + strike_len:.2f} {line_y:.2f} l S\n"
-        return orig_text + strike + "0 0 0 rg 0 0 0 RG " + _draw_text([_format_currency(current)], x, y, font, size)
+        orig_text = _format_currency(original)
+        strike_len = len(orig_text) * (orig_font_size * 0.52)
+        line_y = y + size + 4 + orig_font_size * 0.30
+        return (
+            f"{orig_color} rg {orig_color} RG "
+            + _draw_text([orig_text], x, y + size + 4, font, orig_font_size)
+            + f"{orig_color} RG {orig_font_size * 0.06:.2f} w {x} {line_y:.2f} m {x + strike_len:.2f} {line_y:.2f} l S\n"
+            + "0 0 0 rg 0 0 0 RG "
+            + _draw_text([_format_currency(current)], x, y, font, size)
+        )
+#     if original is not None:
+#         orig_font_size = int(size * 0.8)
+#         orig_color = "0.55 0.55 0.55"
+#         orig_text = f"{orig_color} rg {orig_color} RG " + _draw_text([_format_currency(original)], x, y + size + 4, font, orig_font_size)
+#         # strike line over original
+#         strike_len = len(_format_currency(original)) * (orig_font_size * 0.55)
+#         line_y = y + size + 4 + orig_font_size * 0.3
+#         strike = f"{orig_color} RG {orig_font_size * 0.05:.2f} w {x} {line_y:.2f} m {x + strike_len:.2f} {line_y:.2f} l S\n"
+#         return orig_text + strike + "0 0 0 rg 0 0 0 RG " + _draw_text([_format_currency(current)], x, y, font, size)
     return "0 0 0 rg 0 0 0 RG " + _draw_text([_format_currency(current)], x, y, font, size)
 
 
@@ -103,18 +339,125 @@ def _draw_total_row(label: str, value: float, orig: float | None, x: int, y: int
     y is baseline for current.
     """
     parts = []
+    # if orig is not None and abs(orig - value) > 0.01:
+    #     color = "0.55 0.55 0.55"
+    #     size = 10
+    #     parts.append(f"{color} rg {color} RG ")
+    #     orig_text = f"Pôvodná {label}: {_format_currency(orig)}"
+    #     parts.append(_draw_text([orig_text], x, y + size + 6, "/F1", size))
+    #     strike_len = len(orig_text) * (size * 0.52)
+    #     line_y = y + size + 6 + size * 0.3
+    #     parts.append(f"{color} RG {size * 0.05:.2f} w {x} {line_y:.2f} m {x + strike_len:.2f} {line_y:.2f} l S\n")
     if orig is not None and abs(orig - value) > 0.01:
         color = "0.55 0.55 0.55"
-        size = 10
-        parts.append(f"{color} rg {color} RG ")
-        orig_text = f"Pôvodná {label}: {_format_currency(orig)}"
-        parts.append(_draw_text([orig_text], x, y + size + 6, "/F1", size))
+        size = 9
+        orig_text = f"Povodna {label}: {_format_currency(orig)}"
         strike_len = len(orig_text) * (size * 0.52)
-        line_y = y + size + 6 + size * 0.3
-        parts.append(f"{color} RG {size * 0.05:.2f} w {x} {line_y:.2f} m {x + strike_len:.2f} {line_y:.2f} l S\n")
+        line_y = y + 14 + size * 0.30
+        parts.append(f"{color} rg {color} RG ")
+        parts.append(_draw_text([orig_text], x, y + 14, "/F1", size))
+        parts.append(f"{color} RG {size * 0.06:.2f} w {x} {line_y:.2f} m {x + strike_len:.2f} {line_y:.2f} l S\n")
     parts.append("0 0 0 rg 0 0 0 RG ")
     parts.append(_draw_text([f"{label}: {_format_currency(value)}"], x, y, "/F2", 12))
     return "".join(parts)
+
+
+def _scale_font_units(value: int, units_per_em: int) -> int:
+    if units_per_em <= 0:
+        return int(value)
+    return int(round(value * 1000.0 / float(units_per_em)))
+
+
+def _format_cid_widths(font: TrueTypeFont) -> str:
+    gids = sorted(font.used_gids)
+    if not gids:
+        return ""
+    parts: list[str] = []
+    i = 0
+    while i < len(gids):
+        start = gids[i]
+        widths = [font.width_1000(start)]
+        j = i + 1
+        while j < len(gids) and gids[j] == gids[j - 1] + 1:
+            widths.append(font.width_1000(gids[j]))
+            j += 1
+        parts.append(f"{start} [{' '.join(str(w) for w in widths)}]")
+        i = j
+    return " ".join(parts)
+
+
+def _build_unicode_font_objs(
+    regular: TrueTypeFont,
+    bold: TrueTypeFont,
+) -> tuple[list[bytes], int, int, int]:
+    """
+    Return (font_objects, font1_ref, font2_ref, next_free_obj_id).
+
+    Uses a CIDFontType2 composite font with Identity-H and CIDToGIDMap Identity, so we can
+    emit glyph IDs directly as 2-byte hex strings in content streams.
+    """
+    # Object ids layout:
+    # 3 FontFile2 regular, 4 FontDescriptor regular, 5 CIDFont regular, 6 Type0 regular
+    # 7 FontFile2 bold,    8 FontDescriptor bold,    9 CIDFont bold,   10 Type0 bold
+    reg_file_id, reg_desc_id, reg_cid_id, reg_type0_id = 3, 4, 5, 6
+    bold_file_id, bold_desc_id, bold_cid_id, bold_type0_id = 7, 8, 9, 10
+    next_free = 11
+
+    def fontfile_obj(obj_id: int, font: TrueTypeFont) -> bytes:
+        data = font.data
+        return (
+            f"{obj_id} 0 obj << /Length {len(data)} >> stream\n".encode("ascii")
+            + data
+            + b"\nendstream endobj\n"
+        )
+
+    def font_descriptor_obj(obj_id: int, fontfile_id: int, font: TrueTypeFont) -> bytes:
+        units = int(font.units_per_em or 1000)
+        x_min, y_min, x_max, y_max = font.bbox
+        bbox = [
+            _scale_font_units(x_min, units),
+            _scale_font_units(y_min, units),
+            _scale_font_units(x_max, units),
+            _scale_font_units(y_max, units),
+        ]
+        ascent = _scale_font_units(int(font.ascent), units)
+        descent = _scale_font_units(int(font.descent), units)
+        cap_height = ascent
+        return (
+            f"{obj_id} 0 obj << /Type /FontDescriptor /FontName {font.pdf_name} "
+            f"/Flags 32 /FontBBox [{bbox[0]} {bbox[1]} {bbox[2]} {bbox[3]}] "
+            f"/ItalicAngle 0 /Ascent {ascent} /Descent {descent} /CapHeight {cap_height} "
+            f"/StemV 80 /FontFile2 {fontfile_id} 0 R >> endobj\n"
+        ).encode("ascii")
+
+    def cid_font_obj(obj_id: int, desc_id: int, font: TrueTypeFont) -> bytes:
+        space_gid = font.glyph_id(ord(" "))
+        dw = font.width_1000(space_gid) or 500
+        widths = _format_cid_widths(font)
+        w_part = f" /W [{widths}]" if widths else ""
+        return (
+            f"{obj_id} 0 obj << /Type /Font /Subtype /CIDFontType2 /BaseFont {font.pdf_name} "
+            f"/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> "
+            f"/FontDescriptor {desc_id} 0 R /DW {dw}{w_part} /CIDToGIDMap /Identity >> endobj\n"
+        ).encode("ascii")
+
+    def type0_font_obj(obj_id: int, cid_id: int, font: TrueTypeFont) -> bytes:
+        return (
+            f"{obj_id} 0 obj << /Type /Font /Subtype /Type0 /BaseFont {font.pdf_name} "
+            f"/Encoding /Identity-H /DescendantFonts [{cid_id} 0 R] >> endobj\n"
+        ).encode("ascii")
+
+    objs: list[bytes] = [
+        fontfile_obj(reg_file_id, regular),
+        font_descriptor_obj(reg_desc_id, reg_file_id, regular),
+        cid_font_obj(reg_cid_id, reg_desc_id, regular),
+        type0_font_obj(reg_type0_id, reg_cid_id, regular),
+        fontfile_obj(bold_file_id, bold),
+        font_descriptor_obj(bold_desc_id, bold_file_id, bold),
+        cid_font_obj(bold_cid_id, bold_desc_id, bold),
+        type0_font_obj(bold_type0_id, bold_cid_id, bold),
+    ]
+    return objs, reg_type0_id, bold_type0_id, next_free
 
 
 # -------- Main export --------
@@ -122,6 +465,8 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
     """
     Render a styled 1-page invoice PDF with balanced blocks and readable spacing.
     """
+    global _FONT_MAP
+    _FONT_MAP = _try_load_unicode_fonts()
     # Geometry
     page_w, page_h = 595, 842  # A4 points
     card_x, card_y, card_w, card_h = 32, 60, 531, 720
@@ -137,7 +482,7 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
 
     invoice_no = str(invoice_payload.get("invoice_no", "-"))
     issue_date = str(invoice_payload.get("issue_date", ""))
-    title = invoice_payload.get("doc_title", "Cenova ponuka")
+    title = invoice_payload.get("doc_title", "Cenová ponuka")
     supplier = invoice_payload.get("supplier", {})
     client = invoice_payload.get("client", {})
     totals = invoice_payload.get("totals", {})
@@ -194,7 +539,7 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
     # Header
     header_y = card_top - 18
     content_parts.append(_draw_text([f"{title} c. {invoice_no}"], card_x + 16, header_y, "/F2", 18))
-    content_parts.append(_draw_text([f"Datum vystavenia: {issue_date}"], card_x + 16, header_y - 20, "/F1", 11))
+    content_parts.append(_draw_text([f"Dátum vystavenia: {issue_date}"], card_x + 16, header_y - 20, "/F1", 11))
 
     # Column geometry
     col_gap = 16
@@ -206,11 +551,11 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
     box_height = 130
     supplier_y = header_y - 30 - box_height
     supplier_lines = [
-        "Dodavatel",
+        "Dodávatel",
         supplier.get("name", ""),
         supplier.get("address", ""),
-        f"ICO: {supplier.get('ico','')}",
-        f"DIC: {supplier.get('dic','')}",
+        f"IČO: {supplier.get('ico','')}",
+        f"DIČ: {supplier.get('dic','')}",
         supplier.get("email", "") or "",
     ]
     content_parts.append(f"{border} RG ")
@@ -220,12 +565,12 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
     # Client box
     client_y = supplier_y - box_height - 10
     client_lines_raw = [
-        "Fakturacny profil",
+        "Fakturačný profil",
         client.get("name", ""),
         client.get("address", ""),
-        f"ICO: {client.get('ico','')}" if client.get("ico") else "",
-        f"DIC: {client.get('dic','')}" if client.get("dic") else "",
-        f"IC DPH: {client.get('icdph','')}" if client.get("icdph") else "",
+        f"IČO: {client.get('ico','')}" if client.get("ico") else "",
+        f"DIČ: {client.get('dic','')}" if client.get("dic") else "",
+        f"IČ DPH: {client.get('icdph','')}" if client.get("icdph") else "",
         client.get("email", ""),
     ]
     client_lines: list[str] = []
@@ -289,12 +634,12 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
     payment_y = supplier_y - 10  # posun mierne vyssie
     content_parts.append(_draw_rect(right_x, payment_y, col_width, payment_h, stroke=True, fill=False))
     pay_lines = [
-        f"Variabilny symbol: {invoice_no}",
-        f"Datum vystavenia: {issue_date}",
-        f"Balik: {package_label}",
-        "Stav: Zaplatene",
+        f"Variabilný symbol: {invoice_no}",
+        f"Dátum vystavenia: {issue_date}",
+        f"Balík: {package_label}",
+        "Stav: Nezaplatené",
     ]
-    content_parts.append(_draw_text(["Prehlad platby"], right_x + 12, payment_y + payment_h - 16, "/F2", 11, leading=13))
+    content_parts.append(_draw_text(["Prehľad platby"], right_x + 12, payment_y + payment_h - 16, "/F2", 11, leading=13))
     content_parts.append(_draw_text(pay_lines, right_x + 12, payment_y + payment_h - 32, "/F1", 10, leading=12))
 
     # QR inside payment block (top-right)
@@ -309,20 +654,34 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
 
     # Totals block under payment/QR
     totals_y = payment_y - 60  # posun vyssie
-    # Totals mini-table with larger spacing
+    # Totals mini-table: show current totals, and separately show original services total (bez balika).
     totals_lines = [
-        ("Cena bez DPH", total_no_vat, orig_subtotal),
-        (f"DPH ({int(vat_rate*100)}%)", vat_value, orig_vat),
-        ("Spolu s DPH", total_with_vat, orig_total),
+        ("Cena bez DPH", total_no_vat, None),
+        (f"DPH ({int(vat_rate*100)}%)", vat_value, None),
+        ("Spolu s DPH", total_with_vat, None),
     ]
     box_w = 240
     box_h = 120
     totals_box_y = totals_y - 70
     content_parts.append(_draw_rect(right_x + 6, totals_box_y, box_w, box_h, stroke=True, fill=False))
-    row_y = totals_box_y + box_h - 24
+    # Top note: original services total without the package.
+    orig_services_total = float(totals.get("original_services_total", orig_extras) or 0.0)
+    content_parts.append(f"{muted} rg {muted} RG ")
+    content_parts.append(
+        _draw_text(
+            [f"Povodna cena sluzieb (bez balika): {_format_currency(orig_services_total)}"],
+            right_x + 16,
+            totals_box_y + box_h - 14,
+            "/F1",
+            8,
+        )
+    )
+    content_parts.append("0 0 0 rg 0 0 0 RG ")
+
+    row_y = totals_box_y + box_h - 34
     for label, val, orig in totals_lines:
         content_parts.append(_draw_total_row(label, val, orig, right_x + 16, row_y))
-        row_y -= 34
+        row_y -= 30
 
 
     # Items table header
@@ -332,14 +691,14 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
     content_parts.append(f"{dark} rg {dark} RG ")
     content_parts.append(_draw_rect(table_x, table_header_y, table_w, 30, stroke=True, fill=True))
     content_parts.append("1 1 1 rg 1 1 1 RG ")
-    col_x = [table_x + 10, table_x + 260, table_x + 360, table_x + 450]
-    headers = ["Nazov", "Mnozstvo", "bez DPH", "s DPH"]
+    col_x = [table_x + 10, table_x + 220, table_x + 320, table_x + 420]
+    headers = ["Názov", "Množstvo", "bez DPH", "s DPH"]
     for hx, text in zip(col_x, headers):
         content_parts.append(_draw_text([text], hx, table_header_y + 20, "/F2", 10))
 
     # Item rows
     row_y = table_header_y - 26
-    available_rows = max(1, int((row_y - (card_y + 18)) / 32))
+    available_rows = max(1, int((row_y - (card_y + 36)) / 32))
     extra_items = []
     table_items = list(display_items)
     if len(table_items) > available_rows:
@@ -405,7 +764,7 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
             name,
             f"x{qty}",
         ]
-        content_parts.append(_draw_text([_normalize_ascii(name)], col_x[0], row_y + rh - 26, "/F1", 10))
+        content_parts.append(_draw_text([name], col_x[0], row_y + rh - 26, "/F1", 10))
         content_parts.append(_draw_text([f"x{qty}"], col_x[1], row_y + rh - 26, "/F1", 10))
         content_parts.append(_draw_price_cell(total_no_vat, orig_no_vat, col_x[2], row_y + rh - 26, "/F1", 10))
         content_parts.append(_draw_price_cell(total_with_vat, orig_with_vat, col_x[3], row_y + rh - 26, "/F1", 10))
@@ -445,7 +804,7 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
             content_parts_extra.append(_draw_rect(table_x, row_y, table_w, rh, stroke=True, fill=False))
             name = item.get("name", "")
             qty = item.get("qty", "-")
-            content_parts_extra.append(_draw_text([_normalize_ascii(name)], col_x[0], row_y + rh - 26, "/F1", 10))
+            content_parts_extra.append(_draw_text([name], col_x[0], row_y + rh - 26, "/F1", 10))
             content_parts_extra.append(_draw_text([f"x{qty}"], col_x[1], row_y + rh - 26, "/F1", 10))
             content_parts_extra.append(_draw_price_cell(total_no_vat, orig_no_vat, col_x[2], row_y + rh - 26, "/F1", 10))
             content_parts_extra.append(_draw_price_cell(total_with_vat, orig_with_vat, col_x[3], row_y + rh - 26, "/F1", 10))
@@ -456,21 +815,29 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
     streams_bytes = [s.encode("ascii", "ignore") for s in content_streams]
     lengths = [len(s) for s in streams_bytes]
 
-    objs: list[bytes] = []
-    # Root and pages placeholder added later
-    # Fonts
-    font1_id = 3
-    font2_id = 4
+    page_objs: list[bytes] = []
+    unicode_fonts = bool(_FONT_MAP)
+    if unicode_fonts:
+        font_objs, font1_id, font2_id, next_obj_id = _build_unicode_font_objs(_FONT_MAP["/F1"], _FONT_MAP["/F2"])
+    else:
+        font1_id = 3
+        font2_id = 4
+        font_objs = [
+            b"3 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n",
+            b"4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj\n",
+        ]
+        next_obj_id = 5
     pages_kids: list[int] = []
 
     # Content + page objects
-    next_obj_id = 5
     for idx, (stream, length) in enumerate(zip(streams_bytes, lengths)):
         content_id = next_obj_id
         page_id = next_obj_id + 1
         pages_kids.append(page_id)
-        objs.append(f"{content_id} 0 obj << /Length {length} >> stream\n".encode("ascii") + stream + b"\nendstream endobj\n")
-        objs.append(
+        page_objs.append(
+            f"{content_id} 0 obj << /Length {length} >> stream\n".encode("ascii") + stream + b"\nendstream endobj\n"
+        )
+        page_objs.append(
             f"{page_id} 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents {content_id} 0 R /Resources << /Font << /F1 {font1_id} 0 R /F2 {font2_id} 0 R >> >> >> endobj\n".encode(
                 "ascii"
             )
@@ -481,10 +848,8 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
     kids_ref = " ".join(f"{kid} 0 R" for kid in pages_kids)
     pages_obj = f"2 0 obj << /Type /Pages /Count {len(pages_kids)} /Kids [{kids_ref}] >> endobj\n".encode("ascii")
     catalog_obj = b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n"
-    font1_obj = b"3 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n"
-    font2_obj = b"4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj\n"
 
-    objs = [catalog_obj, pages_obj, font1_obj, font2_obj] + objs
+    objs = [catalog_obj, pages_obj] + font_objs + page_objs
 
     # Assemble offsets/xref
     header = b"%PDF-1.4\n"
@@ -503,3 +868,4 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
 
     pdf_bytes = header + pdf_body + xref + trailer
     path.write_bytes(pdf_bytes)
+    _FONT_MAP = {}
