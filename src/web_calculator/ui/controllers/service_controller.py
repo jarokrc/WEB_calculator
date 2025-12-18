@@ -336,7 +336,7 @@ class ServiceController:
         if not services and not self.w._current_package:
             messagebox.showinfo("Nahlad", "Vyber aspon balicek alebo jednu sluzbu.")
             return
-        client = self.w.client_form.data()
+        client = self.w.client_data()
         breakdown = self.w._pricing.summarize(services)
         PreviewDialog(self.w, self.w._current_package, services, breakdown, self.w._discount_pct, self.w._pricing)
 

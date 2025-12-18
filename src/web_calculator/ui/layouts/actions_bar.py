@@ -9,9 +9,22 @@ class ActionsBar(ctk.CTkFrame):
     Bottom action bar with key buttons.
     """
 
-    def __init__(self, master: tk.Misc, on_reset, on_save, on_load, on_pdf, on_help, on_preview, on_search, on_theme_change=None, theme_names=None):
+    def __init__(
+        self,
+        master: tk.Misc,
+        on_reset,
+        on_save,
+        on_load,
+        on_pdf,
+        on_help,
+        on_preview,
+        on_search,
+        on_theme_change=None,
+        theme_names=None,
+        row: int = 3,
+    ):
         super().__init__(master, fg_color="transparent")
-        self.grid(row=3, column=0, columnspan=2, sticky="ew", padx=8, pady=6)
+        self.grid(row=row, column=0, columnspan=2, sticky="ew", padx=8, pady=6)
 
         self._icon_color = theme.PALETTE["text"]
         self._accent_icon_color = "#ffffff"

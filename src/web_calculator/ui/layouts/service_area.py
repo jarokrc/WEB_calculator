@@ -23,20 +23,32 @@ class ServiceArea(ctk.CTkFrame):
         on_edit_qty,
         on_open_section,
         on_reset_filters,
+        on_open_client,
         price_provider,
         row_minsize: int = 220,
     ):
         super().__init__(master, fg_color="transparent")
         self.grid(row=0, column=1, sticky="nsew")
+        self._min_table_height = row_minsize
         self.rowconfigure(0, weight=0)
         self.rowconfigure(1, weight=1, uniform="tables", minsize=row_minsize)
         self.rowconfigure(2, weight=1, uniform="tables", minsize=row_minsize)
         self.rowconfigure(3, weight=1, uniform="tables", minsize=row_minsize)
         self.columnconfigure(0, weight=1)
+        self.bind("<Configure>", self._on_resize)
 
         controls = ctk.CTkFrame(self, fg_color="transparent")
         controls.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        ctk.CTkButton(controls, text="Reset filtrov", command=on_reset_filters).pack(side="right")
+        controls.columnconfigure(0, weight=1)
+
+        left = ctk.CTkFrame(controls, fg_color="transparent")
+        left.grid(row=0, column=0, sticky="w")
+        self._client_button = ctk.CTkButton(left, text="Klient", command=on_open_client, width=90)
+        self._client_button.pack(side="left")
+        self._client_label = ctk.CTkLabel(left, text="Klient: -")
+        self._client_label.pack(side="left", padx=(8, 0))
+
+        ctk.CTkButton(controls, text="Reset filtrov", command=on_reset_filters).grid(row=0, column=1, sticky="e")
 
         self.primary_table = ServiceTable(
             self,
@@ -99,3 +111,14 @@ class ServiceArea(ctk.CTkFrame):
         self.primary_table.refresh_selection(selected, quantities)
         self.eshop_table.refresh_selection(selected, quantities)
         self.backend_table.refresh_selection(selected, quantities)
+
+    def set_client_name(self, name: str) -> None:
+        text = name.strip() if name else "-"
+        self._client_label.configure(text=f"Klient: {text}")
+
+    def _on_resize(self, event: tk.Event) -> None:
+        available = max(0, int(event.height) - 48)
+        per = int(available / 3) if available > 0 else 0
+        minsize = min(self._min_table_height, per) if per > 0 else 0
+        for row in (1, 2, 3):
+            self.rowconfigure(row, minsize=minsize)

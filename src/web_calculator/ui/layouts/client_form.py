@@ -9,9 +9,10 @@ class ClientForm(ctk.CTkFrame):
     Client form with private person / company toggle and bound StringVars.
     """
 
-    def __init__(self, master: tk.Misc, on_change, row: int = 0):
+    def __init__(self, master: tk.Misc, on_change, row: int | None = 0, use_grid: bool = True):
         super().__init__(master, fg_color=theme.PALETTE["panel"], corner_radius=8)
-        self.grid(row=row, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
+        if use_grid and row is not None:
+            self.grid(row=row, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
         for i in range(4):
             self.columnconfigure(i, weight=1)
 

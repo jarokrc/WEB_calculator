@@ -8,7 +8,7 @@ from web_calculator.core.models.package import Package
 from web_calculator.core.models.service import Service
 from web_calculator.core.services.catalog import Catalog, save_catalog, save_packages
 from web_calculator.ui.layouts.service_area import ServiceArea
-from web_calculator.ui.layouts.client_form import ClientForm
+from web_calculator.ui.components.client_dialog import ClientDialog
 from web_calculator.ui.layouts.actions_bar import ActionsBar
 from web_calculator.ui.components.package_selector import PackageSelector
 from web_calculator.ui.components.summary_panel import SummaryPanel
@@ -40,6 +40,7 @@ class MainWindow(ctk.CTk):
         self._auto_selected: Set[str] = set()
         self._hidden_service_codes: Set[str] = {"ESHOP-E-SHOP-MODUL-ZAKLAD"}
         self._service_editor_windows: dict[str, tk.Toplevel] = {}
+        self._client_data: dict[str, str] = {}
 
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
@@ -65,13 +66,13 @@ class MainWindow(ctk.CTk):
             self._services.edit_service_qty,
             self._services.open_section_window,
             self._services.reset_filters,
+            self._open_client_dialog,
             price_provider=self._services.effective_price,
         )
+        self.service_area.set_client_name(self._client_display_name())
 
         self.summary = SummaryPanel(self, self._pricing, on_discount_change=self._services.set_discount)
         self.summary.grid(row=1, column=0, columnspan=2, sticky="ew")
-
-        self.client_form = ClientForm(self, on_change=self._update_save_buttons, row=2)
 
         self.actions = ActionsBar(
             self,
@@ -84,6 +85,7 @@ class MainWindow(ctk.CTk):
             on_search=self._open_search,
             on_theme_change=self._set_theme,
             theme_names=list(theme.THEMES.keys()),
+            row=2,
         )
 
         # Default to "no package" so doplnky mozno pouzit samostatne.
@@ -324,10 +326,33 @@ class MainWindow(ctk.CTk):
     def _open_search(self) -> None:
         self._services.open_search()
 
+    def _open_client_dialog(self) -> None:
+        ClientDialog(self, self.client_data(), self.set_client_data)
+
     def _set_theme(self, name: str) -> None:
         self._theme_name = name
         self._palette = theme.apply_theme(self, name)
         self.package_selector.update_theme(self._palette)
-        self.client_form.update_theme(self._palette)
         if hasattr(self, "actions"):
             self.actions.update_theme(self._palette)
+
+    def _client_display_name(self) -> str:
+        name = (self._client_data.get("name") or self._client_data.get("company") or "").strip()
+        return name or "-"
+
+    def client_data(self) -> dict:
+        return dict(self._client_data)
+
+    def set_client_data(self, data: dict) -> None:
+        self._client_data = dict(data or {})
+        self.service_area.set_client_name(self._client_display_name())
+        self._update_save_buttons()
+
+    def reset_client_data(self) -> None:
+        self._client_data = {}
+        self.service_area.set_client_name(self._client_display_name())
+        self._update_save_buttons()
+
+    def has_client_data(self) -> bool:
+        keys = ["name", "company", "ico", "dic", "icdph", "email", "address"]
+        return any((self._client_data.get(k) or "").strip() for k in keys)

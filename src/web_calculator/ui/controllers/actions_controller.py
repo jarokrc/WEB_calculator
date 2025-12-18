@@ -20,15 +20,15 @@ class ActionsController:
 
     # --- UI helpers ---
     def update_save_buttons(self) -> None:
-        if not hasattr(self.w, "client_form") or not hasattr(self.w, "actions"):
+        if not hasattr(self.w, "actions"):
             return
-        has_data = self.w.client_form.has_data()
+        has_data = self.w.has_client_data()
         self.w.actions.set_enabled(has_data)
 
     # --- Actions ---
     def save_client(self) -> None:
-        client = self.w.client_form.data()
-        if not self.w.client_form.has_data():
+        client = self.w.client_data()
+        if not self.w.has_client_data():
             messagebox.showwarning("Ulozit klienta", "Vypln aspon jeden udaj o klientovi alebo firme.")
             return
         path = filedialog.asksaveasfile(
@@ -69,13 +69,13 @@ class ActionsController:
         self.w._selected_services = set(data.get("services", []))
         self.w._service_qty = data.get("quantities", {code: 1 for code in self.w._selected_services})
         self.w._discount_pct = float(data.get("discount_pct", 0.0) or 0.0)
-        self.w.client_form.set_data(data.get("client", {}))
+        self.w.set_client_data(data.get("client", {}))
         self.w.service_area.refresh_selection(self.w._selected_services, self.w._service_qty)
         self.w._services.update_summary()
         self.update_save_buttons()
 
     def export_pdf(self) -> None:
-        if not self.w.client_form.has_data():
+        if not self.w.has_client_data():
             messagebox.showwarning("Export PDF", "Vypln aspon jeden udaj o klientovi alebo firme.")
             return
         path = filedialog.asksaveasfilename(
@@ -99,7 +99,7 @@ class ActionsController:
         payload = build_invoice_payload(
             self.w._current_package,
             selections,
-            self.w.client_form.data(),
+            self.w.client_data(),
             self.w._pricing,
             discount_pct=self.w._discount_pct,
             original_package_price=self.w._current_package_raw.base_price if self.w._current_package_raw else None,
@@ -123,7 +123,7 @@ class ActionsController:
         self.w._current_package = None
         self.w._current_package_raw = None
         self.w._service_qty = {s.code: 1 for s in self.w._catalog.services}
-        self.w.client_form.reset()
+        self.w.reset_client_data()
         self.w._discount_pct = 0.0
         self.w.package_selector.select_none()
         self.w.service_area.refresh_selection(self.w._selected_services, self.w._service_qty)
