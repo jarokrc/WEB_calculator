@@ -1,14 +1,15 @@
 import tkinter as tk
-from tkinter import ttk
+import customtkinter as ctk
 from typing import Iterable
 
 from web_calculator.core.models.service import Service
+from web_calculator.ui.styles import theme
 
 
-class SearchDialog(tk.Toplevel):
+class SearchDialog(ctk.CTkToplevel):
     def __init__(self, master: tk.Misc, services: Iterable[Service], on_select_code):
         super().__init__(master)
-        self.title("Vyhľadávanie služieb")
+        self.title("Vyhladavanie sluzieb")
         self.transient(master)
         self.grab_set()
         self.minsize(520, 400)
@@ -17,25 +18,26 @@ class SearchDialog(tk.Toplevel):
         self._on_select_code = on_select_code
         self._services = list(services)
 
-        frame = ttk.Frame(self, padding=10)
-        frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text="Hľadaj").pack(anchor="w")
+        frame = ctk.CTkFrame(self, fg_color="transparent")
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+        ctk.CTkLabel(frame, text="Hladat").pack(anchor="w")
         self._query = tk.StringVar()
-        entry = ttk.Entry(frame, textvariable=self._query)
+        entry = ctk.CTkEntry(frame, textvariable=self._query)
         entry.pack(fill="x", pady=(2, 8))
         entry.bind("<KeyRelease>", lambda _e: self._refresh())
         entry.focus_set()
 
         self._list = tk.Listbox(frame, height=20)
+        theme.style_listbox(self._list, theme.PALETTE)
         self._list.pack(fill="both", expand=True)
         self._list.bind("<Double-Button-1>", self._choose)
         self._list.bind("<Return>", self._choose)
         self._list.bind("<KP_Enter>", self._choose)
 
-        btns = ttk.Frame(frame)
+        btns = ctk.CTkFrame(frame, fg_color="transparent")
         btns.pack(fill="x", pady=8)
-        ttk.Button(btns, text="Vybrať", command=self._choose).pack(side="right", padx=(4, 0))
-        ttk.Button(btns, text="Zavrieť", command=self.destroy).pack(side="right")
+        ctk.CTkButton(btns, text="Vybrat", command=self._choose).pack(side="right", padx=(4, 0))
+        ctk.CTkButton(btns, text="Zavriet", command=self.destroy).pack(side="right")
 
         self._refresh()
 

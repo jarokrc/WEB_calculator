@@ -1,10 +1,11 @@
 import tkinter as tk
-from tkinter import ttk
+import customtkinter as ctk
 
 from web_calculator.core.calculations.pricing_engine import PricingBreakdown, PricingEngine
+from web_calculator.ui.styles import theme
 
 
-class SummaryPanel(ttk.Frame):
+class SummaryPanel(ctk.CTkFrame):
     def __init__(
         self,
         master: tk.Misc,
@@ -12,7 +13,7 @@ class SummaryPanel(ttk.Frame):
         vat_rate: float = 0.23,
         on_discount_change=None,
     ):
-        super().__init__(master, padding=8)
+        super().__init__(master, fg_color="transparent")
         self._pricing = pricing
         self._vat_rate = vat_rate
         self._on_discount_change = on_discount_change or (lambda _val: None)
@@ -26,30 +27,31 @@ class SummaryPanel(ttk.Frame):
         self._vat_var = tk.StringVar(value=self._pricing.format_currency(0))
         self._total_vat_var = tk.StringVar(value=self._pricing.format_currency(0))
 
-        ttk.Label(self, text="Suhrn", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w")
-        ttk.Label(self, text="Balik").grid(row=1, column=0, sticky="w")
-        ttk.Label(self, textvariable=self._base_var, font=("Segoe UI", 10, "bold")).grid(row=1, column=1, sticky="e")
+        ctk.CTkLabel(self, text="Suhrn", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, sticky="w", padx=8)
+        ctk.CTkLabel(self, text="Balik").grid(row=1, column=0, sticky="w", padx=8)
+        ctk.CTkLabel(self, textvariable=self._base_var, font=("Segoe UI", 12, "bold")).grid(row=1, column=1, sticky="e", padx=8)
 
-        ttk.Label(self, text="Doplnky").grid(row=2, column=0, sticky="w")
-        ttk.Label(self, textvariable=self._extras_var).grid(row=2, column=1, sticky="e")
+        ctk.CTkLabel(self, text="Doplnky").grid(row=2, column=0, sticky="w", padx=8)
+        ctk.CTkLabel(self, textvariable=self._extras_var).grid(row=2, column=1, sticky="e", padx=8)
 
-        ttk.Label(self, text="Zlava (%)").grid(row=3, column=0, sticky="w")
-        discount_frame = ttk.Frame(self)
+        ctk.CTkLabel(self, text="Zlava (%)").grid(row=3, column=0, sticky="w", padx=8)
+        discount_frame = ctk.CTkFrame(self, fg_color="transparent")
         discount_frame.grid(row=3, column=1, sticky="e")
-        entry = ttk.Entry(discount_frame, width=6, textvariable=self._discount_var, justify="right")
+        entry = ctk.CTkEntry(discount_frame, width=70, textvariable=self._discount_var, justify="right")
         entry.pack(side="left")
-        ttk.Label(discount_frame, textvariable=self._discount_amount_var).pack(side="left", padx=(6, 0))
+        ctk.CTkLabel(discount_frame, textvariable=self._discount_amount_var).pack(side="left", padx=(6, 0))
 
-        ttk.Separator(self, orient="horizontal").grid(row=4, column=0, columnspan=2, sticky="we", pady=6)
+        separator = ctk.CTkFrame(self, height=2, fg_color=theme.PALETTE["border"])
+        separator.grid(row=4, column=0, columnspan=2, sticky="we", pady=6, padx=8)
 
-        ttk.Label(self, text="Spolu bez DPH", font=("Segoe UI", 11, "bold")).grid(row=5, column=0, sticky="w")
-        ttk.Label(self, textvariable=self._total_var, font=("Segoe UI", 11, "bold")).grid(row=5, column=1, sticky="e")
+        ctk.CTkLabel(self, text="Spolu bez DPH", font=("Segoe UI", 12, "bold")).grid(row=5, column=0, sticky="w", padx=8)
+        ctk.CTkLabel(self, textvariable=self._total_var, font=("Segoe UI", 12, "bold")).grid(row=5, column=1, sticky="e", padx=8)
 
-        ttk.Label(self, text=f"DPH {int(self._vat_rate*100)} %").grid(row=6, column=0, sticky="w")
-        ttk.Label(self, textvariable=self._vat_var).grid(row=6, column=1, sticky="e")
+        ctk.CTkLabel(self, text=f"DPH {int(self._vat_rate*100)} %").grid(row=6, column=0, sticky="w", padx=8)
+        ctk.CTkLabel(self, textvariable=self._vat_var).grid(row=6, column=1, sticky="e", padx=8)
 
-        ttk.Label(self, text="Spolu s DPH", font=("Segoe UI", 12, "bold")).grid(row=7, column=0, sticky="w")
-        ttk.Label(self, textvariable=self._total_vat_var, font=("Segoe UI", 12, "bold")).grid(row=7, column=1, sticky="e")
+        ctk.CTkLabel(self, text="Spolu s DPH", font=("Segoe UI", 13, "bold")).grid(row=7, column=0, sticky="w", padx=8)
+        ctk.CTkLabel(self, textvariable=self._total_vat_var, font=("Segoe UI", 13, "bold")).grid(row=7, column=1, sticky="e", padx=8)
 
         for col in range(2):
             self.columnconfigure(col, weight=1)

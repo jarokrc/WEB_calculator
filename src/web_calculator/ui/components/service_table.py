@@ -1,11 +1,12 @@
 import tkinter as tk
+import customtkinter as ctk
 from tkinter import ttk
 from typing import Callable, Iterable, List, Set
 
 from web_calculator.core.models.service import Service
 
 
-class ServiceTable(ttk.Frame):
+class ServiceTable(ctk.CTkFrame):
     """
     Multi-select table with checkbox-like toggles for services.
     Podporuje triedenie, filter, zobrazenie info a editaciu ceny/mnozstva na dvojklik.
@@ -27,7 +28,7 @@ class ServiceTable(ttk.Frame):
         on_edit_qty: Callable[[Service], None],
         price_provider: Callable[[Service], float] | None = None,
     ):
-        super().__init__(master, padding=8)
+        super().__init__(master, fg_color="transparent")
         self._services: List[Service] = []
         self._selected: Set[str] = set()
         self._quantities: dict[str, float] = {}
@@ -41,13 +42,13 @@ class ServiceTable(ttk.Frame):
         self._on_edit_qty = on_edit_qty
         self._price_provider = price_provider or (lambda svc: svc.price)
 
-        header = ttk.Label(self, text=title, font=("Segoe UI", 10, "bold"), cursor="hand2")
-        header.pack(anchor="w")
+        header = ctk.CTkLabel(self, text=title, font=("Segoe UI", 11, "bold"))
+        header.pack(anchor="w", padx=4, pady=(2, 0))
         header.bind("<Button-1>", self._on_header_click)
         header.bind("<Enter>", lambda _e: self._tree.focus_set())
 
         columns = ("check", "label", "qty", "price", "total", "tag")
-        container = ttk.Frame(self)
+        container = ctk.CTkFrame(self, fg_color="transparent")
         container.pack(fill="both", expand=True, pady=(4, 0))
         container.bind("<Enter>", lambda _e: self._tree.focus_set())
         tree = ttk.Treeview(container, columns=columns, show="headings", selectmode="none", height=12)

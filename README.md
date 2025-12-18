@@ -1,6 +1,6 @@
-# WEB Calculator (Tkinter)
+# WEB Calculator (CustomTkinter)
 
-A desktop pricing calculator for website and e-shop projects. Built with Python and Tkinter, using JSON catalogs for packages and services. Supports selecting a package or standalone add-ons, applies bundle-specific pricing and free quotas, shows previews, and exports a one-page PDF offer.
+A desktop pricing calculator for website and e-shop projects. Built with Python and CustomTkinter/Tkinter, using JSON catalogs for packages and services. Supports selecting a package or standalone add-ons, applies bundle-specific pricing and free quotas, shows previews, and exports a one-page PDF offer.
 
 ## Features
 - Package selection with price modes (base/promo/intra); auto-selects included services and free quotas per package (`included_quantities`).
@@ -28,6 +28,7 @@ A desktop pricing calculator for website and e-shop projects. Built with Python 
 ## Running
 ```bash
 cd WEB_calculator/src
+pip install customtkinter
 python -m web_calculator.app
 ```
 

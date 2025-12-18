@@ -1,12 +1,12 @@
 import tkinter as tk
-from tkinter import ttk
+import customtkinter as ctk
 from typing import List, Set
 
 from web_calculator.core.models.service import Service
 from web_calculator.ui.components.service_table import ServiceTable
 
 
-class ServiceArea(ttk.Frame):
+class ServiceArea(ctk.CTkFrame):
     """
     Prava sekcia s tabulkami sluzieb (PRIMARY/ESHOP/WEB).
     Klik na nazov tabulky otvori samostatne okno s editorom sluzieb.
@@ -26,7 +26,7 @@ class ServiceArea(ttk.Frame):
         price_provider,
         row_minsize: int = 220,
     ):
-        super().__init__(master, padding=4)
+        super().__init__(master, fg_color="transparent")
         self.grid(row=0, column=1, sticky="nsew")
         self.rowconfigure(0, weight=0)
         self.rowconfigure(1, weight=1, uniform="tables", minsize=row_minsize)
@@ -34,9 +34,9 @@ class ServiceArea(ttk.Frame):
         self.rowconfigure(3, weight=1, uniform="tables", minsize=row_minsize)
         self.columnconfigure(0, weight=1)
 
-        controls = ttk.Frame(self)
+        controls = ctk.CTkFrame(self, fg_color="transparent")
         controls.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        ttk.Button(controls, text="Reset filtrov", command=on_reset_filters).pack(side="right")
+        ctk.CTkButton(controls, text="Reset filtrov", command=on_reset_filters).pack(side="right")
 
         self.primary_table = ServiceTable(
             self,

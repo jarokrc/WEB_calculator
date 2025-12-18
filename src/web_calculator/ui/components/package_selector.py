@@ -1,12 +1,12 @@
 import tkinter as tk
-from tkinter import ttk
+import customtkinter as ctk
 from typing import Callable, Optional
 
 from web_calculator.core.models.package import Package
 from web_calculator.ui.styles import theme
 
 
-class PackageSelector(ttk.Frame):
+class PackageSelector(ctk.CTkFrame):
     def __init__(
         self,
         master: tk.Misc,
@@ -15,7 +15,7 @@ class PackageSelector(ttk.Frame):
         on_price_mode_change: Callable[[str], None] | None = None,
         on_edit_package: Callable[[Package], None] | None = None,
     ):
-        super().__init__(master, padding=8)
+        super().__init__(master, fg_color="transparent")
         self._packages = packages
         self._on_select = on_select
         self._on_price_mode_change = on_price_mode_change or (lambda _mode: None)
@@ -24,30 +24,32 @@ class PackageSelector(ttk.Frame):
         self._items: list[Package | None] = [None] + list(packages)
         self._price_mode = "base"
 
-        ttk.Label(self, text="Baliky", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        ctk.CTkLabel(self, text="Baliky", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=8, pady=(6, 2))
 
-        mode_frame = ttk.Frame(self)
-        mode_frame.pack(fill="x", pady=(0, 4))
-        ttk.Label(mode_frame, text="Cenova uroven:").pack(side="left")
+        mode_frame = ctk.CTkFrame(self, fg_color="transparent")
+        mode_frame.pack(fill="x", pady=(0, 4), padx=8)
+        ctk.CTkLabel(mode_frame, text="Cenova uroven:").pack(side="left")
         self._mode_var = tk.StringVar(value=self._price_mode)
-        mode_box = ttk.Combobox(
+        self._mode_combo = ctk.CTkComboBox(
             mode_frame,
-            state="readonly",
-            width=10,
             values=["base", "promo", "intra"],
-            textvariable=self._mode_var,
+            variable=self._mode_var,
+            command=lambda _val: self._change_mode(self._mode_var.get()),
+            state="readonly",
+            width=120,
         )
-        mode_box.pack(side="left", padx=(6, 0))
-        mode_box.bind("<<ComboboxSelected>>", lambda _e: self._change_mode(self._mode_var.get()))
+        self._mode_combo.pack(side="left", padx=(6, 0))
+        theme.style_combo_box(self._mode_combo, theme.PALETTE)
+        self._mode_combo.set(self._mode_var.get())
 
         self._list = tk.Listbox(self, height=max(1, min(8, len(self._items))), activestyle="dotbox")
         theme.style_listbox(self._list, theme.PALETTE)
-        self._list.pack(fill="both", expand=True, pady=(4, 0))
+        self._list.pack(fill="both", expand=True, padx=8, pady=(4, 0))
 
         self._refresh_list()
         self._list.bind("<<ListboxSelect>>", self._handle_select)
         self._list.bind("<Double-Button-1>", self._handle_edit)
-        ttk.Label(self, textvariable=self._desc_var, wraplength=260, justify="left").pack(fill="x", pady=(6, 0))
+        ctk.CTkLabel(self, textvariable=self._desc_var, wraplength=260, justify="left").pack(fill="x", padx=8, pady=(6, 8))
 
     def select_package(self, code: Optional[str]) -> None:
         """
@@ -95,6 +97,9 @@ class PackageSelector(ttk.Frame):
         self._list.selection_set(selected_idx)
         self._list.see(selected_idx)
 
+    def refresh_packages(self) -> None:
+        self._refresh_list()
+
     def _change_mode(self, mode: str) -> None:
         if mode not in {"base", "promo", "intra"}:
             return
@@ -111,6 +116,8 @@ class PackageSelector(ttk.Frame):
         if self._mode_var.get() == target:
             return
         self._mode_var.set(target)
+        if hasattr(self, "_mode_combo"):
+            self._mode_combo.set(target)
         self._change_mode(target)
 
     def _current_price(self, pkg: Package) -> float:
@@ -122,6 +129,8 @@ class PackageSelector(ttk.Frame):
 
     def update_theme(self, palette: dict) -> None:
         theme.style_listbox(self._list, palette)
+        if hasattr(self, "_mode_combo"):
+            theme.style_combo_box(self._mode_combo, palette)
 
     def _selected_package(self) -> Package | None:
         selection = self._list.curselection()

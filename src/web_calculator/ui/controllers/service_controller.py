@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import tkinter as tk
+import customtkinter as ctk
 from dataclasses import replace
 from pathlib import Path
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import messagebox, simpledialog
 from typing import Iterable, Set
 
 from web_calculator.core.models.package import Package
@@ -241,44 +242,44 @@ class ServiceController:
         return self._apply_sort(services)
 
     def edit_service_details(self, service: Service) -> None:
-        dialog = tk.Toplevel(self.w)
+        dialog = ctk.CTkToplevel(self.w)
         dialog.title("Upravit sluzbu")
         dialog.transient(self.w)
         dialog.grab_set()
         dialog.geometry("620x520")
         dialog.minsize(560, 460)
 
-        frame = ttk.Frame(dialog, padding=12)
-        frame.pack(fill="both", expand=True)
+        frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        frame.pack(fill="both", expand=True, padx=12, pady=12)
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(6, weight=1)
 
-        ttk.Label(frame, text="Kod").grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(frame, text="Kod").grid(row=0, column=0, sticky="w")
         code_var = tk.StringVar(value=service.code)
-        ttk.Entry(frame, textvariable=code_var, state="readonly").grid(row=0, column=1, sticky="ew")
+        ctk.CTkEntry(frame, textvariable=code_var, state="disabled").grid(row=0, column=1, sticky="ew")
 
-        ttk.Label(frame, text="Nazov").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ctk.CTkLabel(frame, text="Nazov").grid(row=1, column=0, sticky="w", pady=(6, 0))
         label_var = tk.StringVar(value=service.label or "")
-        ttk.Entry(frame, textvariable=label_var).grid(row=1, column=1, sticky="ew", pady=(6, 0))
+        ctk.CTkEntry(frame, textvariable=label_var).grid(row=1, column=1, sticky="ew", pady=(6, 0))
 
-        ttk.Label(frame, text="Cena (price)").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ctk.CTkLabel(frame, text="Cena (price)").grid(row=2, column=0, sticky="w", pady=(6, 0))
         price_var = tk.StringVar(value=f"{float(service.price):.2f}")
-        ttk.Entry(frame, textvariable=price_var).grid(row=2, column=1, sticky="ew", pady=(6, 0))
+        ctk.CTkEntry(frame, textvariable=price_var).grid(row=2, column=1, sticky="ew", pady=(6, 0))
 
-        ttk.Label(frame, text="Cena pri baliku (price2)").grid(row=3, column=0, sticky="w", pady=(6, 0))
+        ctk.CTkLabel(frame, text="Cena pri baliku (price2)").grid(row=3, column=0, sticky="w", pady=(6, 0))
         price2_var = tk.StringVar(value=f"{float(service.price2):.2f}")
-        ttk.Entry(frame, textvariable=price2_var).grid(row=3, column=1, sticky="ew", pady=(6, 0))
+        ctk.CTkEntry(frame, textvariable=price2_var).grid(row=3, column=1, sticky="ew", pady=(6, 0))
 
-        ttk.Label(frame, text="Tag").grid(row=4, column=0, sticky="w", pady=(6, 0))
+        ctk.CTkLabel(frame, text="Tag").grid(row=4, column=0, sticky="w", pady=(6, 0))
         tag_var = tk.StringVar(value=service.tag or "")
-        ttk.Entry(frame, textvariable=tag_var).grid(row=4, column=1, sticky="ew", pady=(6, 0))
+        ctk.CTkEntry(frame, textvariable=tag_var).grid(row=4, column=1, sticky="ew", pady=(6, 0))
 
-        ttk.Label(frame, text="Info / popis").grid(row=5, column=0, sticky="w", pady=(6, 0))
-        info = tk.Text(frame, height=8, wrap="word")
+        ctk.CTkLabel(frame, text="Info / popis").grid(row=5, column=0, sticky="w", pady=(6, 0))
+        info = ctk.CTkTextbox(frame, height=160, wrap="word")
         info.grid(row=6, column=0, columnspan=2, sticky="nsew")
         info.insert("1.0", service.info or "")
 
-        btns = ttk.Frame(frame)
+        btns = ctk.CTkFrame(frame, fg_color="transparent")
         btns.grid(row=7, column=0, columnspan=2, sticky="e", pady=(10, 0))
 
         def save() -> None:
@@ -306,8 +307,15 @@ class ServiceController:
             self._refresh_service_editor_windows()
             dialog.destroy()
 
-        ttk.Button(btns, text="Zrusit", command=dialog.destroy).pack(side="right", padx=(6, 0))
-        ttk.Button(btns, text="Ulozit", command=save, style="Accent.TButton").pack(side="right")
+        ctk.CTkButton(btns, text="Zrusit", command=dialog.destroy).pack(side="right", padx=(6, 0))
+        ctk.CTkButton(
+            btns,
+            text="Ulozit",
+            command=save,
+            fg_color=self.w._palette["accent"],
+            hover_color=self.w._palette["accent_dim"],
+            text_color="#ffffff",
+        ).pack(side="right")
 
     def show_selected_service_info(self) -> None:
         selected = list(self.w._selected_services)
@@ -375,12 +383,13 @@ class ServiceController:
         # If `included_quantities` defines a free quota, only the paid remainder uses base price.
         included_qty = self._included_qty_map().get(service.code, 0)
         if service.code in included_set:
-            if included_qty > 0 and qty > 0:
-                paid_qty = max(0, qty - included_qty)
-                total_cost = paid_qty * base_price
-                return total_cost / qty if qty > 0 else base_price
-            # Fully included in package => free.
-            return 0.0
+            if qty <= 0:
+                return base_price
+            bundle_qty = included_qty if included_qty > 0 else 1
+            if qty <= bundle_qty:
+                return float(alt_price)
+            total_cost = (bundle_qty * float(alt_price)) + ((qty - bundle_qty) * base_price)
+            return total_cost / qty if qty > 0 else base_price
 
         # Optional bundle discount: show/apply alternative price when the service declares a bundle match.
         bundle_match = (service.bundle or "NONE").upper()

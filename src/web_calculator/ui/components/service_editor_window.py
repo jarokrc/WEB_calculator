@@ -1,12 +1,12 @@
 import tkinter as tk
-from tkinter import ttk
+import customtkinter as ctk
 from typing import Callable, Iterable
 
 from web_calculator.core.models.service import Service
 from web_calculator.ui.components.service_table import ServiceTable
 
 
-class ServiceEditorWindow(tk.Toplevel):
+class ServiceEditorWindow(ctk.CTkToplevel):
     def __init__(
         self,
         master: tk.Misc,
@@ -33,13 +33,13 @@ class ServiceEditorWindow(tk.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", self._handle_close)
 
-        header = ttk.Frame(self, padding=10)
-        header.pack(fill="x")
-        ttk.Label(header, text=title, font=("Segoe UI", 11, "bold")).pack(side="left")
-        ttk.Button(header, text="Zavriet", command=self._handle_close).pack(side="right")
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.pack(fill="x", padx=10, pady=10)
+        ctk.CTkLabel(header, text=title, font=("Segoe UI", 12, "bold")).pack(side="left")
+        ctk.CTkButton(header, text="Zavriet", command=self._handle_close).pack(side="right")
 
-        body = ttk.Frame(self, padding=(10, 0, 10, 10))
-        body.pack(fill="both", expand=True)
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         body.rowconfigure(0, weight=1)
         body.columnconfigure(0, weight=1)
 
@@ -67,4 +67,3 @@ class ServiceEditorWindow(tk.Toplevel):
     def _handle_close(self) -> None:
         self._on_close(self._section_id)
         self.destroy()
-

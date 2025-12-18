@@ -1,7 +1,7 @@
 import tkinter as tk
-from pathlib import Path
-from tkinter import ttk
-from typing import List, Set
+import customtkinter as ctk
+from tkinter import messagebox, simpledialog, ttk
+from typing import Set
 
 from web_calculator.core.calculations.pricing_engine import PricingEngine
 from web_calculator.core.models.package import Package
@@ -17,7 +17,7 @@ from web_calculator.ui.controllers.actions_controller import ActionsController
 from web_calculator.ui.controllers.service_controller import ServiceController
 
 
-class MainWindow(tk.Tk):
+class MainWindow(ctk.CTk):
     def __init__(self, catalog: Catalog):
         super().__init__()
         self._theme_name = "dark_futuristic"
@@ -91,46 +91,197 @@ class MainWindow(tk.Tk):
         self._update_save_buttons()
 
     def _open_package_edit_dialog(self, package: Package) -> None:
-        dialog = tk.Toplevel(self)
+        dialog = ctk.CTkToplevel(self)
         dialog.title(f"Upravit sluzby balika {package.code}")
         dialog.transient(self)
         dialog.grab_set()
         dialog.geometry("720x520")
         dialog.minsize(600, 400)
 
-        frame = ttk.Frame(dialog, padding=12)
-        frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text=f"Balik {package.code}", font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        ttk.Label(frame, text="Vyber sluzby, ktore maju byt automaticky zahrnute v baliku.").pack(anchor="w", pady=(0, 6))
+        frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        frame.pack(fill="both", expand=True, padx=12, pady=12)
+        ctk.CTkLabel(frame, text=f"Balik {package.code}", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        ctk.CTkLabel(frame, text="Vyber sluzby, ktore maju byt automaticky zahrnute v baliku.").pack(anchor="w", pady=(0, 6))
 
-        list_frame = ttk.Frame(frame)
+        base_var = tk.StringVar(value=f"{float(package.base_price):.2f}")
+        promo_var = tk.StringVar(value=f"{float(package.promo_price):.2f}" if package.promo_price is not None else "")
+        intra_var = tk.StringVar(value=f"{float(package.intra_price):.2f}" if package.intra_price is not None else "")
+
+        price_frame = ctk.CTkFrame(frame)
+        price_frame.pack(fill="x", pady=(0, 10))
+        price_frame.columnconfigure(1, weight=1)
+        ctk.CTkLabel(price_frame, text="Ceny balika", font=("Segoe UI", 11, "bold")).grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 4)
+        )
+        ctk.CTkLabel(price_frame, text="Base").grid(row=1, column=0, sticky="w", padx=(8, 6), pady=(4, 0))
+        ctk.CTkEntry(price_frame, textvariable=base_var, width=120, justify="right").grid(row=1, column=1, sticky="w", pady=(4, 0))
+        ctk.CTkLabel(price_frame, text="Promo").grid(row=2, column=0, sticky="w", padx=(8, 6), pady=(4, 0))
+        ctk.CTkEntry(price_frame, textvariable=promo_var, width=120, justify="right").grid(row=2, column=1, sticky="w", pady=(4, 0))
+        ctk.CTkLabel(price_frame, text="Intra").grid(row=3, column=0, sticky="w", padx=(8, 6), pady=(4, 6))
+        ctk.CTkEntry(price_frame, textvariable=intra_var, width=120, justify="right").grid(row=3, column=1, sticky="w", pady=(4, 6))
+
+        filter_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        filter_frame.pack(fill="x", pady=(0, 6))
+        ctk.CTkLabel(filter_frame, text="Zdroj").pack(side="left")
+        source_var = tk.StringVar(value="Vsetko")
+        source_box = ctk.CTkComboBox(
+            filter_frame,
+            values=["Vsetko", "PRIMARY", "ESHOP", "WEB"],
+            variable=source_var,
+            command=lambda _val: refresh_list(),
+            state="readonly",
+            width=120,
+        )
+        source_box.pack(side="left", padx=(6, 12))
+        theme.style_combo_box(source_box, self._palette)
+        ctk.CTkLabel(filter_frame, text="Hladat").pack(side="left")
+        query_var = tk.StringVar()
+        query_entry = ctk.CTkEntry(filter_frame, textvariable=query_var)
+        query_entry.pack(side="left", fill="x", expand=True)
+
+        list_frame = ctk.CTkFrame(frame)
         list_frame.pack(fill="both", expand=True)
-        listbox = tk.Listbox(list_frame, selectmode=tk.MULTIPLE, activestyle="dotbox")
+        listbox = tk.Listbox(list_frame, selectmode=tk.MULTIPLE, activestyle="dotbox", exportselection=False)
         theme.style_listbox(listbox, self._palette)
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=listbox.yview)
         listbox.configure(yscrollcommand=scrollbar.set)
         listbox.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        service_rows = [
-            (svc.code, svc.label, svc.tag, svc.bundle)
-            for svc in self._catalog.services
-        ]
-        for idx, (code, label, tag, bundle) in enumerate(service_rows):
-            tag_txt = f" [{tag}]" if tag else ""
-            bundle_txt = f" (bundle: {bundle})" if bundle and bundle != "NONE" else ""
-            listbox.insert(tk.END, f"{code} - {label}{tag_txt}{bundle_txt}")
-            if code in (package.included_services or []):
-                listbox.selection_set(idx)
+        services = list(self._catalog.services)
+        selected_codes = set(package.included_services or [])
+        qty_map = dict(package.included_quantities or {})
+        visible_codes: list[str] = []
+        updating = False
 
-        buttons = ttk.Frame(frame)
+        def score(svc: Service, query: str) -> int:
+            label = (svc.label or "").lower()
+            code = (svc.code or "").lower()
+            if not query:
+                return 0
+            if label.startswith(query) or code.startswith(query):
+                return 0
+            idx = label.find(query)
+            if idx == -1:
+                idx = code.find(query)
+            return idx if idx >= 0 else 999
+
+        def matches_source(svc: Service, source_filter: str) -> bool:
+            source = (svc.source or "").upper()
+            if source_filter == "PRIMARY":
+                return source == "PRIMARY"
+            if source_filter == "ESHOP":
+                return source.startswith("ESHOP")
+            if source_filter == "WEB":
+                return source == "WEB"
+            return True
+
+        def refresh_list() -> None:
+            nonlocal visible_codes, updating
+            updating = True
+            try:
+                listbox.delete(0, tk.END)
+                visible_codes = []
+                query = (query_var.get() or "").strip().lower()
+                source_filter = source_var.get() or "Vsetko"
+                matches = []
+                for svc in services:
+                    if not matches_source(svc, source_filter):
+                        continue
+                    label = (svc.label or "").lower()
+                    code = (svc.code or "").lower()
+                    if query and query not in label and query not in code:
+                        continue
+                    matches.append((score(svc, query), svc))
+                matches.sort(key=lambda item: (item[0], (item[1].label or "").lower()))
+                for idx, (_score, svc) in enumerate(matches):
+                    tag_txt = f" [{svc.tag}]" if svc.tag else ""
+                    bundle_txt = f" (bundle: {svc.bundle})" if svc.bundle and svc.bundle != "NONE" else ""
+                    qty_txt = ""
+                    if svc.code in selected_codes:
+                        qty_txt = f" (qty: {qty_map.get(svc.code, 1)})"
+                    listbox.insert(tk.END, f"{svc.code} - {svc.label}{tag_txt}{bundle_txt}{qty_txt}")
+                    visible_codes.append(svc.code)
+                    if svc.code in selected_codes:
+                        listbox.selection_set(idx)
+            finally:
+                updating = False
+
+        def sync_selection_from_listbox() -> None:
+            nonlocal selected_codes
+            if updating:
+                return
+            prev_selected = set(selected_codes)
+            visible_set = set(visible_codes)
+            selected_visible = {visible_codes[i] for i in listbox.curselection()}
+            selected_codes = (selected_codes - visible_set) | selected_visible
+            for code in selected_codes - prev_selected:
+                qty_map.setdefault(code, 1)
+
+        def edit_quantity(event: tk.Event) -> None:
+            idx = listbox.nearest(event.y)
+            if idx < 0 or idx >= len(visible_codes):
+                return
+            code = visible_codes[idx]
+            svc = next((s for s in services if s.code == code), None)
+            if svc is None:
+                return
+            selected_codes.add(code)
+            qty_map.setdefault(code, 1)
+            current = qty_map.get(code, 1)
+            value = simpledialog.askstring(
+                "Mnozstvo v baliku",
+                f"Mnozstvo pre:\n{svc.label}",
+                initialvalue=str(current),
+                parent=dialog,
+            )
+            if value is None:
+                return
+            try:
+                qty = int(value.strip())
+            except ValueError:
+                messagebox.showerror("Chyba", "Zadaj cele cislo.", parent=dialog)
+                return
+            if qty <= 0:
+                messagebox.showerror("Chyba", "Mnozstvo musi byt vacsie ako 0.", parent=dialog)
+                return
+            qty_map[code] = qty
+            refresh_list()
+
+        listbox.bind("<<ListboxSelect>>", lambda _e: sync_selection_from_listbox())
+        listbox.bind("<Double-Button-1>", edit_quantity)
+        query_entry.bind("<KeyRelease>", lambda _e: refresh_list())
+        refresh_list()
+        query_entry.focus_set()
+
+        buttons = ctk.CTkFrame(frame, fg_color="transparent")
         buttons.pack(fill="x", pady=(8, 0))
 
+        def parse_price(raw: str, allow_empty: bool) -> float | None:
+            text = (raw or "").strip()
+            if text == "":
+                if allow_empty:
+                    return None
+                raise ValueError("required")
+            value = float(text.replace(",", "."))
+            if value < 0:
+                raise ValueError("negative")
+            return value
+
         def save_and_close() -> None:
-            prev_included = set(package.included_services or [])
-            sel_indices = listbox.curselection()
-            selected_codes = [service_rows[i][0] for i in sel_indices]
-            package.included_services = selected_codes
+            try:
+                base_price = parse_price(base_var.get(), allow_empty=False)
+                promo_price = parse_price(promo_var.get(), allow_empty=True)
+                intra_price = parse_price(intra_var.get(), allow_empty=True)
+            except ValueError:
+                messagebox.showerror("Chyba", "Zadaj platne cislo pre ceny balika.", parent=dialog)
+                return
+
+            package.base_price = float(base_price)
+            package.promo_price = promo_price
+            package.intra_price = intra_price
+
+            package.included_services = [svc.code for svc in services if svc.code in selected_codes]
             # Update bundle flag on services: added -> set bundle to package; removed -> NONE if previously linked.
             for svc in self._catalog.services:
                 if svc.code in selected_codes:
@@ -138,7 +289,6 @@ class MainWindow(tk.Tk):
                 elif (svc.bundle or "").upper() == (package.code or "").upper():
                     svc.bundle = "NONE"
             # Keep included quantities in sync: remove dropped codes, ensure new ones at least 1.
-            qty_map = dict(package.included_quantities or {})
             for code in list(qty_map.keys()):
                 if code not in selected_codes:
                     qty_map.pop(code, None)
@@ -148,13 +298,21 @@ class MainWindow(tk.Tk):
             # Persist both split packages.json and combined catalog.json for konzistentnost.
             save_packages(self._catalog)
             save_catalog(self._catalog)
+            self.package_selector.refresh_packages()
             if self._current_package_raw and self._current_package_raw.code == package.code:
                 self._services.set_package(self._current_package_raw)
                 self.service_area.refresh_selection(self._selected_services, self._service_qty)
             dialog.destroy()
 
-        ttk.Button(buttons, text="Zrusit", command=dialog.destroy).pack(side="right", padx=(6, 0))
-        ttk.Button(buttons, text="Ulozit", command=save_and_close, style="Accent.TButton").pack(side="right")
+        ctk.CTkButton(buttons, text="Zrusit", command=dialog.destroy).pack(side="right", padx=(6, 0))
+        ctk.CTkButton(
+            buttons,
+            text="Ulozit",
+            command=save_and_close,
+            fg_color=self._palette["accent"],
+            hover_color=self._palette["accent_dim"],
+            text_color="#ffffff",
+        ).pack(side="right")
 
 
 
@@ -170,3 +328,6 @@ class MainWindow(tk.Tk):
         self._theme_name = name
         self._palette = theme.apply_theme(self, name)
         self.package_selector.update_theme(self._palette)
+        self.client_form.update_theme(self._palette)
+        if hasattr(self, "actions"):
+            self.actions.update_theme(self._palette)
