@@ -23,7 +23,7 @@ A desktop pricing calculator for website and e-shop projects. Built with Python 
 - `core/` - pricing engine, models, catalog loader (JSON only), invoice payload builder.
 - `ui/` - Tkinter layout components and controllers (`service_controller`, `actions_controller`).
 - `utils/` - PDF renderer, optional QR helper.
-- `vyvojarske_doplnky/` - archived import scripts/resources (not used at runtime).
+
 
 ## Running
 ```bash
