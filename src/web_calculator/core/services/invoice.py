@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 from typing import Iterable, Optional
 
 from web_calculator.core.calculations.pricing_engine import PricingEngine
@@ -8,12 +9,10 @@ from web_calculator.core.models.package import Package
 from web_calculator.core.models.service import Service
 
 
-SUPPLIER = {
-    "name": "RedBlue Solutions s. r. o.",
-    "ico": "55522467",
-    "dic": "2122005897",
-    "address": "Sadova 2719/3A, 905 01 Senica",
-}
+from web_calculator.core.services.supplier import load_supplier
+from web_calculator.utils.variable_symbol import generate_variable_symbol
+
+SUPPLIER = load_supplier()
 
 
 def _format_client_block(client: dict) -> list[str]:
@@ -43,7 +42,9 @@ def build_invoice_payload(
     selections: Iterable[tuple[Service, int] | tuple[Service, int, float]],
     client: dict,
     pricing: PricingEngine,
+    supplier: dict | None = None,
     vat_rate: float = 0.23,
+    vat_mode: str = "add",
     qr_data: Optional[str] = None,
     doc_title: str = "Cenova ponuka",
     discount_pct: float = 0.0,
@@ -57,44 +58,68 @@ def build_invoice_payload(
     selections = list(selections)
     breakdown = pricing.summarize(selections)
     discount_amount = breakdown.total * (discount_pct / 100.0)
-    subtotal_no_vat = max(0.0, breakdown.total - discount_amount)
-    vat = subtotal_no_vat * vat_rate
-    today = date.today().isoformat()
-    invoice_no = today.replace("-", "")
+    if vat_mode == "included":
+        total_with_vat = max(0.0, breakdown.total - discount_amount)
+        subtotal_no_vat = total_with_vat / (1 + vat_rate) if vat_rate > 0 else total_with_vat
+        vat = total_with_vat - subtotal_no_vat
+    else:
+        subtotal_no_vat = max(0.0, breakdown.total - discount_amount)
+        vat = subtotal_no_vat * vat_rate
+        total_with_vat = subtotal_no_vat + vat
+    today = date.today()
+    issue_date = today.strftime("%d/%m/%Y")
+    invoice_no = generate_variable_symbol()
 
-    base_original = original_package_price if original_package_price is not None else (package.base_price if package else 0.0)
+    base_raw = package.base_price if package else 0.0
+    base_original_raw = original_package_price if original_package_price is not None else base_raw
+    if vat_mode == "included" and vat_rate > 0:
+        base_current = base_raw / (1 + vat_rate)
+        base_original = base_original_raw / (1 + vat_rate)
+    else:
+        base_current = base_raw
+        base_original = base_original_raw
 
     items = []
     extras_original = 0.0
+    extras_current = 0.0
     for selection in selections:
         if len(selection) == 3:
             svc, qty, orig_price = selection  # type: ignore[misc]
         else:
             svc, qty = selection  # type: ignore[misc]
             orig_price = svc.price
-        line_total = svc.price * qty
-        original_total = float(orig_price) * qty
+        if vat_mode == "included" and vat_rate > 0:
+            unit_no_vat = svc.price / (1 + vat_rate)
+            orig_unit_no_vat = float(orig_price) / (1 + vat_rate)
+        else:
+            unit_no_vat = svc.price
+            orig_unit_no_vat = float(orig_price)
+
+        line_total = unit_no_vat * qty
+        original_total = float(orig_unit_no_vat) * qty
         extras_original += original_total
+        extras_current += line_total
         items.append(
             {
                 "name": svc.label,
                 "unit": svc.unit,
                 "qty": qty,
-                "unit_price": svc.price,
+                "unit_price": unit_no_vat,
                 "total": line_total,
-                "original_unit_price": float(orig_price),
+                "original_unit_price": float(orig_unit_no_vat),
                 "original_total": original_total,
             }
         )
 
     total_original_before_discount = base_original + extras_original
     original_services_total = extras_original
+    base_for_totals = base_current if vat_mode == "included" else breakdown.base
 
     return {
         "invoice_no": invoice_no,
-        "issue_date": today,
+        "issue_date": issue_date,
         "package": package.code if package else "-",
-        "supplier": SUPPLIER,
+        "supplier": supplier or SUPPLIER,
         "client": {
             "name": client.get("name") or client.get("company") or "-",
             "address": client.get("address") or "-",
@@ -104,8 +129,8 @@ def build_invoice_payload(
             "email": client.get("email") or "",
         },
         "totals": {
-            "base": breakdown.base,
-            "extras": breakdown.extras,
+            "base": base_for_totals,
+            "extras": extras_current if vat_mode == "included" else breakdown.extras,
             "original_base": base_original,
             "original_extras": extras_original,
             # Original services total is calculated "bez balika" (sum of service base prices).
@@ -116,8 +141,9 @@ def build_invoice_payload(
             "total_before_discount": breakdown.total,
             "total_no_vat": subtotal_no_vat,
             "vat": vat,
-            "total_with_vat": subtotal_no_vat + vat,
+            "total_with_vat": total_with_vat,
             "vat_rate": vat_rate,
+            "vat_mode": vat_mode,
             "original_total_before_discount": total_original_before_discount,
         },
         "items": items,

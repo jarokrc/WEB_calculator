@@ -7,6 +7,7 @@ from web_calculator.core.calculations.pricing_engine import PricingEngine
 from web_calculator.core.models.package import Package
 from web_calculator.core.models.service import Service
 from web_calculator.core.services.catalog import Catalog, save_catalog, save_packages
+from web_calculator.core.services.supplier import load_supplier, save_supplier
 from web_calculator.ui.layouts.service_area import ServiceArea
 from web_calculator.ui.components.client_dialog import ClientDialog
 from web_calculator.ui.layouts.actions_bar import ActionsBar
@@ -36,11 +37,15 @@ class MainWindow(ctk.CTk):
         self._current_package_raw: Package | None = None
         self._price_mode: str = "base"
         self._discount_pct: float = 0.0
+        self._vat_rate: float = 0.23
+        self._vat_mode: str = "add"  # add = ceny bez DPH, included = ceny s DPH
         self._base_prices: dict[str, tuple[float, float]] = {s.code: (s.price, s.price2) for s in catalog.services}
         self._auto_selected: Set[str] = set()
         self._hidden_service_codes: Set[str] = {"ESHOP-E-SHOP-MODUL-ZAKLAD"}
         self._service_editor_windows: dict[str, tk.Toplevel] = {}
         self._client_data: dict[str, str] = {}
+        self._supplier_data: dict[str, str] = load_supplier()
+        self._title_base = "WEB kalkulacka"
 
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
@@ -71,7 +76,15 @@ class MainWindow(ctk.CTk):
         )
         self.service_area.set_client_name(self._client_display_name())
 
-        self.summary = SummaryPanel(self, self._pricing, on_discount_change=self._services.set_discount)
+        self.summary = SummaryPanel(
+            self,
+            self._pricing,
+            vat_rate=self._vat_rate,
+            vat_mode=self._vat_mode,
+            on_discount_change=self._services.set_discount,
+            on_vat_change=self._set_vat_rate,
+            on_vat_mode_change=self._set_vat_mode,
+        )
         self.summary.grid(row=1, column=0, columnspan=2, sticky="ew")
 
         self.actions = ActionsBar(
@@ -83,6 +96,7 @@ class MainWindow(ctk.CTk):
             on_help=self._services.show_help,
             on_preview=self._services.show_preview,
             on_search=self._open_search,
+            on_edit_supplier=self._open_supplier_dialog,
             on_theme_change=self._set_theme,
             theme_names=list(theme.THEMES.keys()),
             row=2,
@@ -91,10 +105,11 @@ class MainWindow(ctk.CTk):
         # Default to "no package" so doplnky mozno pouzit samostatne.
         self.package_selector.select_none()
         self._update_save_buttons()
+        self._update_title()
 
     def _open_package_edit_dialog(self, package: Package) -> None:
         dialog = ctk.CTkToplevel(self)
-        dialog.title(f"Upravit sluzby balika {package.code}")
+        dialog.title(f"Upravit sluzby balika {package.code} - {self._supplier_display_name()}")
         dialog.transient(self)
         dialog.grab_set()
         dialog.geometry("720x520")
@@ -327,7 +342,24 @@ class MainWindow(ctk.CTk):
         self._services.open_search()
 
     def _open_client_dialog(self) -> None:
-        ClientDialog(self, self.client_data(), self.set_client_data)
+        ClientDialog(self, self.client_data(), self.set_client_data, firm_name=self._supplier_display_name())
+
+    def _open_supplier_dialog(self) -> None:
+        from web_calculator.ui.components.supplier_dialog import SupplierDialog
+
+        SupplierDialog(self, self._supplier_data, self.set_supplier_data, firm_name=self._supplier_display_name())
+
+    def _set_vat_rate(self, value: float) -> None:
+        self._vat_rate = max(0.0, value)
+        self._services.update_summary()
+
+    def _set_vat_mode(self, mode: str) -> None:
+        mode_norm = (mode or "add").lower()
+        if "inc" in mode_norm or "cene" in mode_norm:
+            self._vat_mode = "included"
+        else:
+            self._vat_mode = "add"
+        self._services.update_summary()
 
     def _set_theme(self, name: str) -> None:
         self._theme_name = name
@@ -356,3 +388,39 @@ class MainWindow(ctk.CTk):
     def has_client_data(self) -> bool:
         keys = ["name", "company", "ico", "dic", "icdph", "email", "address"]
         return any((self._client_data.get(k) or "").strip() for k in keys)
+
+    def supplier_data(self) -> dict:
+        # Return flattened mapping of active profile for PDF consumption
+        active_id = self._supplier_data.get("active")
+        profiles = self._supplier_data.get("profiles", [])
+        prof = next((p for p in profiles if p.get("id") == active_id), profiles[0] if profiles else {"fields": []})
+        mapping: dict[str, str] = {}
+        for item in prof.get("fields", []):
+            code = (item.get("code") or item.get("label") or "").strip()
+            val = (item.get("value") or "").strip()
+            if not code and not val:
+                continue
+            key = code or f"field_{len(mapping)+1}"
+            mapping[key] = val
+        return mapping
+
+    def supplier_fields(self) -> list[dict]:
+        active_id = self._supplier_data.get("active")
+        profiles = self._supplier_data.get("profiles", [])
+        prof = next((p for p in profiles if p.get("id") == active_id), profiles[0] if profiles else {"fields": []})
+        return list(prof.get("fields", []))
+
+    def set_supplier_data(self, data: dict) -> None:
+        self._supplier_data = dict(data or {})
+        save_supplier(self._supplier_data)
+        self._update_title()
+
+    def _supplier_display_name(self) -> str:
+        profiles = self._supplier_data.get("profiles", [])
+        active_id = self._supplier_data.get("active")
+        prof = next((p for p in profiles if p.get("id") == active_id), profiles[0] if profiles else None)
+        name = (prof.get("name") or prof.get("id")) if prof else ""
+        return name.strip() if name else "NASTAV FIRMU"
+
+    def _update_title(self) -> None:
+        self.title(f"{self._title_base} - {self._supplier_display_name()}")

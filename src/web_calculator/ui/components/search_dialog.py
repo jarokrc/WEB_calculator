@@ -7,9 +7,10 @@ from web_calculator.ui.styles import theme
 
 
 class SearchDialog(ctk.CTkToplevel):
-    def __init__(self, master: tk.Misc, services: Iterable[Service], on_select_code):
+    def __init__(self, master: tk.Misc, services: Iterable[Service], on_select_code, firm_name: str = ""):
         super().__init__(master)
-        self.title("Vyhladavanie sluzieb")
+        suffix = f" - {firm_name}" if firm_name else ""
+        self.title(f"Vyhladavanie sluzieb{suffix}")
         self.transient(master)
         self.grab_set()
         self.minsize(520, 400)

@@ -6,9 +6,10 @@ from web_calculator.ui.styles import theme
 
 
 class ClientDialog(ctk.CTkToplevel):
-    def __init__(self, master: tk.Misc, data: dict, on_save):
+    def __init__(self, master: tk.Misc, data: dict, on_save, firm_name: str = ""):
         super().__init__(master)
-        self.title("Klient")
+        suffix = f" - {firm_name}" if firm_name else ""
+        self.title(f"Klient{suffix}")
         self.transient(master)
         self.grab_set()
         self.geometry("520x460")

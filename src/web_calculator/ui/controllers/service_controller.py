@@ -92,6 +92,7 @@ class ServiceController:
             selected_tags=self.w._filter_tags,
             selected_sources=set(),
             on_apply=self.on_filter_change,
+            firm_name=self.w._supplier_display_name(),
         )
 
     def on_filter_change(self, tags: Set[str], sources: Set[str]) -> None:
@@ -209,8 +210,10 @@ class ServiceController:
             on_edit_qty=lambda svc: self.edit_service_qty(section_id, svc),
             on_edit_price=self.edit_service_price,
             on_edit_details=self.edit_service_details,
+            on_add_service=lambda: self.create_service(section_id),
             price_provider=self.effective_price,
             on_close=on_close,
+            firm_name=self.w._supplier_display_name(),
         )
         self.w._service_editor_windows[section_id] = win
 
@@ -241,48 +244,82 @@ class ServiceController:
             services = all_services
         return self._apply_sort(services)
 
+    def create_service(self, section_id: str | None = None) -> None:
+        default_source = self._source_for_section(section_id)
+        new_service = Service(
+            code="",
+            label="",
+            source=default_source,
+            unit="od",
+            price=0.0,
+            price2=0.0,
+            bundle="NONE",
+            tag="",
+            info="",
+        )
+        self._open_service_dialog(new_service, is_new=True, section_id=section_id)
+
     def edit_service_details(self, service: Service) -> None:
+        self._open_service_dialog(service, is_new=False, section_id=None)
+
+    def _open_service_dialog(self, service: Service, is_new: bool, section_id: str | None) -> None:
         dialog = ctk.CTkToplevel(self.w)
-        dialog.title("Upravit sluzbu")
+        suffix = f" - {self.w._supplier_display_name()}"
+        dialog.title(f"{'Nova sluzba' if is_new else 'Upravit sluzbu'}{suffix}")
         dialog.transient(self.w)
         dialog.grab_set()
-        dialog.geometry("620x520")
-        dialog.minsize(560, 460)
+        dialog.geometry("680x560")
+        dialog.minsize(620, 480)
 
         frame = ctk.CTkFrame(dialog, fg_color="transparent")
         frame.pack(fill="both", expand=True, padx=12, pady=12)
         frame.columnconfigure(1, weight=1)
-        frame.rowconfigure(6, weight=1)
+        frame.rowconfigure(7, weight=1)
 
         ctk.CTkLabel(frame, text="Kod").grid(row=0, column=0, sticky="w")
         code_var = tk.StringVar(value=service.code)
-        ctk.CTkEntry(frame, textvariable=code_var, state="disabled").grid(row=0, column=1, sticky="ew")
+        ctk.CTkEntry(frame, textvariable=code_var).grid(row=0, column=1, sticky="ew")
 
-        ctk.CTkLabel(frame, text="Nazov").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ctk.CTkLabel(frame, text="Zdroj").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        source_var = tk.StringVar(value=(service.source or self._source_for_section(section_id)).upper())
+        ctk.CTkComboBox(
+            frame,
+            values=self._available_sources(service.source),
+            variable=source_var,
+            state="readonly",
+        ).grid(row=1, column=1, sticky="ew", pady=(6, 0))
+
+        ctk.CTkLabel(frame, text="Nazov").grid(row=2, column=0, sticky="w", pady=(6, 0))
         label_var = tk.StringVar(value=service.label or "")
-        ctk.CTkEntry(frame, textvariable=label_var).grid(row=1, column=1, sticky="ew", pady=(6, 0))
+        ctk.CTkEntry(frame, textvariable=label_var).grid(row=2, column=1, sticky="ew", pady=(6, 0))
 
-        ctk.CTkLabel(frame, text="Cena (price)").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ctk.CTkLabel(frame, text="Cena (price)").grid(row=3, column=0, sticky="w", pady=(6, 0))
         price_var = tk.StringVar(value=f"{float(service.price):.2f}")
-        ctk.CTkEntry(frame, textvariable=price_var).grid(row=2, column=1, sticky="ew", pady=(6, 0))
+        ctk.CTkEntry(frame, textvariable=price_var).grid(row=3, column=1, sticky="ew", pady=(6, 0))
 
-        ctk.CTkLabel(frame, text="Cena pri baliku (price2)").grid(row=3, column=0, sticky="w", pady=(6, 0))
+        ctk.CTkLabel(frame, text="Cena pri baliku (price2)").grid(row=4, column=0, sticky="w", pady=(6, 0))
         price2_var = tk.StringVar(value=f"{float(service.price2):.2f}")
-        ctk.CTkEntry(frame, textvariable=price2_var).grid(row=3, column=1, sticky="ew", pady=(6, 0))
+        ctk.CTkEntry(frame, textvariable=price2_var).grid(row=4, column=1, sticky="ew", pady=(6, 0))
 
-        ctk.CTkLabel(frame, text="Tag").grid(row=4, column=0, sticky="w", pady=(6, 0))
+        ctk.CTkLabel(frame, text="Tag").grid(row=5, column=0, sticky="w", pady=(6, 0))
         tag_var = tk.StringVar(value=service.tag or "")
-        ctk.CTkEntry(frame, textvariable=tag_var).grid(row=4, column=1, sticky="ew", pady=(6, 0))
+        ctk.CTkComboBox(frame, values=self._available_tags(service.tag), variable=tag_var).grid(
+            row=5, column=1, sticky="ew", pady=(6, 0)
+        )
 
-        ctk.CTkLabel(frame, text="Info / popis").grid(row=5, column=0, sticky="w", pady=(6, 0))
-        info = ctk.CTkTextbox(frame, height=160, wrap="word")
-        info.grid(row=6, column=0, columnspan=2, sticky="nsew")
+        ctk.CTkLabel(frame, text="Info / popis").grid(row=6, column=0, sticky="w", pady=(6, 0))
+        info = ctk.CTkTextbox(frame, height=180, wrap="word")
+        info.grid(row=7, column=0, columnspan=2, sticky="nsew")
         info.insert("1.0", service.info or "")
 
         btns = ctk.CTkFrame(frame, fg_color="transparent")
-        btns.grid(row=7, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        btns.grid(row=8, column=0, columnspan=2, sticky="e", pady=(12, 0))
 
         def save() -> None:
+            raw_code = (code_var.get() or "").strip()
+            if not raw_code:
+                messagebox.showerror("Chyba", "Kod sluzby nemoze byt prazdny.", parent=dialog)
+                return
             raw_label = (label_var.get() or "").strip()
             if not raw_label:
                 messagebox.showerror("Chyba", "Nazov sluzby nemoze byt prazdny.", parent=dialog)
@@ -294,28 +331,132 @@ class ServiceController:
                 messagebox.showerror("Chyba", "Zadaj platne cisla pre ceny.", parent=dialog)
                 return
 
+            new_code = raw_code.strip().upper()
+            new_source = (source_var.get() or "").strip().upper()
+            allowed_sources = self._available_sources(service.source)
+            if new_source not in allowed_sources:
+                messagebox.showerror("Chyba", "Vyber zdroj zo zoznamu.", parent=dialog)
+                return
+
+            conflict = next((s for s in self.w._catalog.services if s.code == new_code and s is not service), None)
+            if conflict:
+                messagebox.showerror("Chyba", f"Sluzba s kodom {new_code} uz existuje.", parent=dialog)
+                return
+
+            old_code = service.code
+            service.code = new_code
             service.label = raw_label
             service.price = new_price
             service.price2 = new_price2
             service.tag = (tag_var.get() or "").strip()
             service.info = (info.get("1.0", "end") or "").strip()
+            service.source = new_source
 
+            if is_new:
+                self.w._catalog.services.append(service)
+                self.w._service_qty.setdefault(service.code, 1)
+
+            self._apply_code_change(old_code, service.code)
             self.w._base_prices[service.code] = (float(service.price), float(service.price2))
+
             save_catalog(self.w._catalog)
             self.refresh_service_tables(self.w._current_package)
             self.update_summary()
             self._refresh_service_editor_windows()
             dialog.destroy()
 
+        def delete_service() -> None:
+            if is_new:
+                dialog.destroy()
+                return
+            if not messagebox.askyesno("Zmazat sluzbu", f"Naozaj odstranit {service.code}?", parent=dialog):
+                return
+            self._remove_service(service)
+            dialog.destroy()
+
         ctk.CTkButton(btns, text="Zrusit", command=dialog.destroy).pack(side="right", padx=(6, 0))
         ctk.CTkButton(
             btns,
-            text="Ulozit",
+            text="Ulozit" if not is_new else "Vytvorit",
             command=save,
             fg_color=self.w._palette["accent"],
             hover_color=self.w._palette["accent_dim"],
             text_color="#ffffff",
         ).pack(side="right")
+        if not is_new:
+            ctk.CTkButton(btns, text="Zmazat", command=delete_service, fg_color="#9b1c1c").pack(side="left")
+
+    def _apply_code_change(self, old_code: str, new_code: str) -> None:
+        if not old_code or old_code == new_code:
+            return
+        if old_code in self.w._selected_services:
+            self.w._selected_services.discard(old_code)
+            self.w._selected_services.add(new_code)
+        qty = self.w._service_qty.pop(old_code, None)
+        if qty is not None:
+            self.w._service_qty[new_code] = qty
+        base_prices = self.w._base_prices.pop(old_code, None)
+        if base_prices:
+            self.w._base_prices[new_code] = base_prices
+        if old_code in self.w._auto_selected:
+            self.w._auto_selected.discard(old_code)
+            self.w._auto_selected.add(new_code)
+        if old_code in self.w._hidden_service_codes:
+            self.w._hidden_service_codes.discard(old_code)
+            self.w._hidden_service_codes.add(new_code)
+        for pkg in self.w._catalog.packages:
+            if old_code in (pkg.included_services or []):
+                pkg.included_services = [new_code if c == old_code else c for c in pkg.included_services]
+            if old_code in (pkg.included_quantities or {}):
+                qty_val = pkg.included_quantities.pop(old_code, None)
+                if qty_val is not None:
+                    pkg.included_quantities[new_code] = qty_val
+        for pkg in (self.w._current_package, self.w._current_package_raw):
+            if pkg and old_code in (pkg.included_services or []):
+                pkg.included_services = [new_code if c == old_code else c for c in pkg.included_services]
+            if pkg and old_code in (pkg.included_quantities or {}):
+                qty_val = pkg.included_quantities.pop(old_code, None)
+                if qty_val is not None:
+                    pkg.included_quantities[new_code] = qty_val
+
+    def _remove_service(self, service: Service) -> None:
+        code = service.code
+        self.w._catalog.services = [s for s in self.w._catalog.services if s is not service]
+        self.w._selected_services.discard(code)
+        self.w._service_qty.pop(code, None)
+        self.w._base_prices.pop(code, None)
+        self.w._auto_selected.discard(code)
+        self.w._hidden_service_codes.discard(code)
+        for pkg in self.w._catalog.packages:
+            if code in pkg.included_services:
+                pkg.included_services = [c for c in pkg.included_services if c != code]
+            pkg.included_quantities.pop(code, None)
+        for pkg in (self.w._current_package, self.w._current_package_raw):
+            if pkg and code in (pkg.included_services or []):
+                pkg.included_services = [c for c in pkg.included_services if c != code]
+            if pkg:
+                pkg.included_quantities.pop(code, None)
+        save_catalog(self.w._catalog)
+        self.refresh_service_tables(self.w._current_package)
+        self.w.service_area.refresh_selection(self.w._selected_services, self.w._service_qty)
+        self.update_summary()
+        self._refresh_service_editor_windows()
+
+    def _available_tags(self, current: str | None = None) -> list[str]:
+        tags = {current} if current else set()
+        tags.update({s.tag for s in self.w._catalog.services if s.tag})
+        return sorted(tags)
+
+    def _available_sources(self, current: str | None = None) -> list[str]:
+        base = ["PRIMARY", "ESHOP", "WEB", "EXTRA"]
+        current_val = (current or "").upper()
+        if current_val and current_val not in base:
+            base.append(current_val)
+        return base
+
+    def _source_for_section(self, section_id: str | None) -> str:
+        mapping = {"primary": "PRIMARY", "eshop": "ESHOP", "backend": "WEB"}
+        return mapping.get(section_id or "", "")
 
     def show_selected_service_info(self) -> None:
         selected = list(self.w._selected_services)
@@ -338,10 +479,20 @@ class ServiceController:
             return
         client = self.w.client_data()
         breakdown = self.w._pricing.summarize(services)
-        PreviewDialog(self.w, self.w._current_package, services, breakdown, self.w._discount_pct, self.w._pricing)
+        PreviewDialog(
+            self.w,
+            self.w._current_package,
+            services,
+            breakdown,
+            self.w._discount_pct,
+            self.w._pricing,
+            self.w._vat_rate,
+            self.w._vat_mode,
+            firm_name=self.w._supplier_display_name(),
+        )
 
     def open_search(self) -> None:
-        SearchDialog(self.w, self.w._catalog.services, self.select_service_by_code)
+        SearchDialog(self.w, self.w._catalog.services, self.select_service_by_code, firm_name=self.w._supplier_display_name())
 
     def select_service_by_code(self, code: str) -> None:
         svc = next((s for s in self.w._catalog.services if s.code == code), None)
@@ -360,7 +511,7 @@ class ServiceController:
             if s.code in self.w._selected_services
         ]
         breakdown = self.w._pricing.summarize(services)
-        self.w.summary.update_values(breakdown, self.w._discount_pct)
+        self.w.summary.update_values(breakdown, self.w._discount_pct, self.w._vat_rate, self.w._vat_mode)
 
     def set_discount(self, value: float) -> None:
         self.w._discount_pct = min(100.0, max(0.0, value))

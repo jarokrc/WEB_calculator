@@ -19,6 +19,7 @@ class ActionsBar(ctk.CTkFrame):
         on_help,
         on_preview,
         on_search,
+        on_edit_supplier,
         on_theme_change=None,
         theme_names=None,
         row: int = 3,
@@ -60,6 +61,15 @@ class ActionsBar(ctk.CTkFrame):
             compound="left",
         )
         self.load_btn.pack(side="left", padx=(0, 6))
+
+        self.supplier_btn = ctk.CTkButton(
+            self,
+            text="Firemne udaje",
+            command=on_edit_supplier,
+            image=self._icons.get("help"),
+            compound="left",
+        )
+        self.supplier_btn.pack(side="left", padx=(0, 6))
 
         self.pdf_btn = ctk.CTkButton(
             self,
@@ -135,6 +145,8 @@ class ActionsBar(ctk.CTkFrame):
             hover_color=palette["accent_dim"],
             text_color="#ffffff",
         )
+        if hasattr(self, "supplier_btn"):
+            self.supplier_btn.configure(image=self._icons.get("help"))
         self.pdf_btn.configure(
             image=self._accent_icons["pdf"],
             fg_color=palette["accent"],

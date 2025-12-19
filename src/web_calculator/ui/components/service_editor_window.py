@@ -19,14 +19,17 @@ class ServiceEditorWindow(ctk.CTkToplevel):
         on_edit_qty,
         on_edit_price,
         on_edit_details,
+        on_add_service,
         price_provider,
         on_close: Callable[[str], None],
+        firm_name: str = "",
     ):
         super().__init__(master)
         self._section_id = section_id
         self._on_close = on_close
 
-        self.title(title)
+        suffix = f" - {firm_name}" if firm_name else ""
+        self.title(f"{title}{suffix}")
         self.transient(master)
         self.geometry("980x640")
         self.minsize(780, 520)
@@ -36,7 +39,10 @@ class ServiceEditorWindow(ctk.CTkToplevel):
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=10, pady=10)
         ctk.CTkLabel(header, text=title, font=("Segoe UI", 12, "bold")).pack(side="left")
-        ctk.CTkButton(header, text="Zavriet", command=self._handle_close).pack(side="right")
+        buttons = ctk.CTkFrame(header, fg_color="transparent")
+        buttons.pack(side="right")
+        ctk.CTkButton(buttons, text="Zavriet", command=self._handle_close).pack(side="right")
+        ctk.CTkButton(buttons, text="Pridat sluzbu", command=on_add_service).pack(side="right", padx=(0, 8))
 
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=10, pady=(0, 10))

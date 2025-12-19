@@ -251,6 +251,35 @@ def _format_currency(value: float) -> str:
     return f"{value:,.2f} EUR"
 
 
+def _build_supplier_lines(supplier: Mapping) -> list[str]:
+    s = supplier or {}
+    lines = ["Dodavatel"]
+    name = s.get("name") or s.get("company") or ""
+    if name:
+        lines.append(str(name))
+    address = s.get("address") or ""
+    if address:
+        lines.append(str(address))
+    known = {
+        "ico": "ICO",
+        "dic": "DIC",
+        "icdph": "IC DPH",
+        "iban": "IBAN",
+        "email": "Email",
+        "phone": "Tel",
+    }
+    for key, label in known.items():
+        val = s.get(key, "")
+        if val:
+            lines.append(f"{label}: {val}")
+    extras = [k for k in s.keys() if k not in known and k not in ("name", "company", "address")]
+    for key in extras:
+        val = s.get(key, "")
+        if val:
+            lines.append(f"{key}: {val}")
+    return lines
+
+
 def _draw_text(lines: Iterable[str], x: int, y: int, font: str, size: int, leading: int | None = None) -> str:
     out = []
     spacing = leading or (size + 2)
@@ -360,6 +389,33 @@ def _draw_total_row(label: str, value: float, orig: float | None, x: int, y: int
     parts.append("0 0 0 rg 0 0 0 RG ")
     parts.append(_draw_text([f"{label}: {_format_currency(value)}"], x, y, "/F2", 12))
     return "".join(parts)
+
+
+def _draw_summary_lines(lines: list[str], x: int, y: int, header_font: str, header_size: int, body_font: str, body_size: int) -> str:
+    """
+    Render summary lines with styling:
+    - Lines starting with 'povodna' are grey and strike-through.
+    - Line starting with 'spolu s dph' is bold (header_font).
+    """
+    out: list[str] = []
+    spacing = body_size + 3
+    for line in lines:
+        text = str(line or "")
+        lower = text.lower()
+        if lower.startswith("povodna"):
+            color = "0.55 0.55 0.55"
+            out.append(f"{color} rg {color} RG ")
+            out.append(_draw_text([text], x, y, body_font, body_size))
+            strike_len = len(text) * (body_size * 0.52)
+            line_y = y + body_size * 0.3
+            out.append(f"{color} RG {body_size * 0.05:.2f} w {x} {line_y:.2f} m {x + strike_len:.2f} {line_y:.2f} l S\n")
+            out.append("0 0 0 rg 0 0 0 RG ")
+        elif lower.startswith("spolu s dph"):
+            out.append(_draw_text([text], x, y, header_font, header_size))
+        else:
+            out.append(_draw_text([text], x, y, body_font, body_size))
+        y -= spacing
+    return "".join(out)
 
 
 def _scale_font_units(value: int, units_per_em: int) -> int:
@@ -541,46 +597,6 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
     content_parts.append(_draw_text([f"{title} c. {invoice_no}"], card_x + 16, header_y, "/F2", 18))
     content_parts.append(_draw_text([f"Dátum vystavenia: {issue_date}"], card_x + 16, header_y - 20, "/F1", 11))
 
-    # Column geometry
-    col_gap = 16
-    col_width = 248
-    left_x = card_x + 16
-    right_x = left_x + col_width + col_gap
-
-    # Supplier box
-    box_height = 130
-    supplier_y = header_y - 30 - box_height
-    supplier_lines = [
-        "Dodávatel",
-        supplier.get("name", ""),
-        supplier.get("address", ""),
-        f"IČO: {supplier.get('ico','')}",
-        f"DIČ: {supplier.get('dic','')}",
-        supplier.get("email", "") or "",
-    ]
-    content_parts.append(f"{border} RG ")
-    content_parts.append(_draw_rect(left_x, supplier_y, col_width, box_height, stroke=True, fill=False))
-    content_parts.append(_draw_text(supplier_lines, left_x + 12, supplier_y + box_height - 16, "/F2", 11, leading=13))
-
-    # Client box
-    client_y = supplier_y - box_height - 10
-    client_lines_raw = [
-        "Fakturačný profil",
-        client.get("name", ""),
-        client.get("address", ""),
-        f"IČO: {client.get('ico','')}" if client.get("ico") else "",
-        f"DIČ: {client.get('dic','')}" if client.get("dic") else "",
-        f"IČ DPH: {client.get('icdph','')}" if client.get("icdph") else "",
-        client.get("email", ""),
-    ]
-    client_lines: list[str] = []
-    for line in client_lines_raw:
-        if not line:
-            continue
-        client_lines.extend(wrap(line, 42) or ["-"])
-    content_parts.append(_draw_rect(left_x, client_y, col_width, box_height, stroke=True, fill=False))
-    content_parts.append(_draw_text(client_lines, left_x + 12, client_y + box_height - 16, "/F2", 11, leading=13))
-
     # Totals helpers
     vat_rate = float(totals.get("vat_rate", 0.23))
     discount_pct = float(totals.get("discount_pct", 0.0) or 0.0)
@@ -629,60 +645,143 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
     # append real service items
     display_items.extend(items)
 
-    # Payment block (right column top)
-    payment_h = 140
-    payment_y = supplier_y - 10  # posun mierne vyssie
-    content_parts.append(_draw_rect(right_x, payment_y, col_width, payment_h, stroke=True, fill=False))
-    pay_lines = [
-        f"Variabilný symbol: {invoice_no}",
-        f"Dátum vystavenia: {issue_date}",
-        f"Balík: {package_label}",
-        "Stav: Nezaplatené",
+    # --- Legacy payment/totals layout (kept for reference) ---
+    # payment_h = 140
+    # payment_y = supplier_y - 10  # posun mierne vyssie
+    # content_parts.append(_draw_rect(right_x, payment_y, col_width, payment_h, stroke=True, fill=False))
+    # pay_lines = invoice_payload.get("payment_lines_override") or [
+    #     f"Variabilny symbol: {invoice_no}",
+    #     f"Datum vystavenia: {issue_date}",
+    #     f"Balik: {package_label}",
+    #     "Stav: Nezaplateny",
+    # ]
+    # content_parts.append(_draw_text(["Prehlad platby"], right_x + 12, payment_y + payment_h - 16, "/F2", 11, leading=13))
+    # content_parts.append(_draw_text(pay_lines, right_x + 12, payment_y + payment_h - 32, "/F1", 10, leading=12))
+    #
+    # # QR inside payment block (top-right)
+    # qr_side = 90
+    # qr_draw = ""
+    # if qr_matrix:
+    #     qr_scale = max(2, qr_side // max(len(qr_matrix), len(qr_matrix[0])))
+    #     qr_draw = _draw_qr(qr_matrix, right_x + col_width - qr_scale * len(qr_matrix) - 12, payment_y + payment_h - 12, qr_scale)
+    # elif qr_data:
+    #     qr_draw = _draw_rect(right_x + col_width - qr_side - 12, payment_y + payment_h - qr_side - 12, qr_side, qr_side, stroke=True, fill=False) + _draw_text(["QR"], right_x + col_width - qr_side//2 - 8, payment_y + payment_h - qr_side//2 - 12, "/F2", 12)
+    # content_parts.append(qr_draw)
+    #
+    # # Totals block under payment/QR
+    # totals_y = payment_y - 60  # posun vyssie
+    # totals_lines = [
+    #     ("Cena bez DPH", total_no_vat, None),
+    #     (f"DPH ({int(vat_rate*100)}%)", vat_value, None),
+    #     ("Spolu s DPH", total_with_vat, None),
+    # ]
+    # box_w = 240
+    # box_h = 120
+    # totals_box_y = totals_y - 70
+    # content_parts.append(_draw_rect(right_x + 6, totals_box_y, box_w, box_h, stroke=True, fill=False))
+    # orig_services_total = float(totals.get("original_services_total", orig_extras) or 0.0)
+    # content_parts.append(f"{muted} rg {muted} RG ")
+    # content_parts.append(
+    #     _draw_text(
+    #         [f"Povodna cena sluzieb (bez balika)/bez DPH: {_format_currency(orig_services_total)}"],
+    #         right_x + 16,
+    #         totals_box_y + box_h - 14,
+    #         "/F1",
+    #         8,
+    #     )
+    # )
+    # content_parts.append("0 0 0 rg 0 0 0 RG ")
+    # row_y = totals_box_y + box_h - 34
+    # for label, val, orig in totals_lines:
+    #     content_parts.append(_draw_total_row(label, val, orig, right_x + 16, row_y))
+    #     row_y -= 30
+
+
+    # Column geometry
+    col_gap = 16
+    col_width = 248
+    left_x = card_x + 16
+    right_x = left_x + col_width + col_gap
+    section_height = 150
+    section_gap = 12
+    section_header_size = 12
+    section_body_size = 11
+
+    # Supplier box (Dodavatel)
+    supplier_y = header_y - 30 - section_height
+    supplier_lines = invoice_payload.get("supplier_lines_override") or _build_supplier_lines(supplier)
+    content_parts.append(f"{border} RG ")
+    content_parts.append(_draw_rect(left_x, supplier_y, col_width, section_height, stroke=True, fill=False))
+    content_parts.append(_draw_text(["Dodavatel"], left_x + 12, supplier_y + section_height - 16, "/F2", section_header_size, leading=section_header_size + 1))
+    content_parts.append(_draw_text(supplier_lines, left_x + 12, supplier_y + section_height - 32, "/F1", section_body_size, leading=section_body_size + 2))
+
+    # Client box (Odberatel)
+    client_y = supplier_y - section_gap - section_height
+    client_lines_raw = [
+        "Odberatel",
+        client.get("name", ""),
+        client.get("address", ""),
+        f"ICO: {client.get('ico','')}" if client.get("ico") else "",
+        f"DIC: {client.get('dic','')}" if client.get("dic") else "",
+        f"IC DPH: {client.get('icdph','')}" if client.get("icdph") else "",
+        client.get("email", ""),
     ]
-    content_parts.append(_draw_text(["Prehľad platby"], right_x + 12, payment_y + payment_h - 16, "/F2", 11, leading=13))
-    content_parts.append(_draw_text(pay_lines, right_x + 12, payment_y + payment_h - 32, "/F1", 10, leading=12))
+    client_lines: list[str] = []
+    for line in client_lines_raw:
+        if not line:
+            continue
+        client_lines.extend(wrap(line, 42) or ["-"])
+    client_override = invoice_payload.get("client_lines_override")
+    if client_override:
+        client_lines = list(client_override)
+    content_parts.append(_draw_rect(left_x, client_y, col_width, section_height, stroke=True, fill=False))
+    content_parts.append(_draw_text(["Odberatel"], left_x + 12, client_y + section_height - 16, "/F2", section_header_size, leading=section_header_size + 1))
+    content_parts.append(_draw_text(client_lines, left_x + 12, client_y + section_height - 32, "/F1", section_body_size, leading=section_body_size + 2))
+
+    # Payment block (right column top)
+    payment_y = supplier_y  # align with supplier top
+    content_parts.append(_draw_rect(right_x, payment_y, col_width, section_height, stroke=True, fill=False))
+    pay_lines = invoice_payload.get("payment_lines_override") or [
+        f"Variabilny symbol: {invoice_no}",
+        f"Datum vystavenia: {issue_date}",
+        f"Balik: {package_label}",
+        "Stav: Nezaplateny",
+    ]
+    content_parts.append(_draw_text(["Prehlad platby"], right_x + 12, payment_y + section_height - 16, "/F2", section_header_size, leading=section_header_size + 1))
+    content_parts.append(_draw_text(pay_lines, right_x + 12, payment_y + section_height - 32, "/F1", section_body_size, leading=section_body_size + 2))
 
     # QR inside payment block (top-right)
     qr_side = 90
     qr_draw = ""
     if qr_matrix:
         qr_scale = max(2, qr_side // max(len(qr_matrix), len(qr_matrix[0])))
-        qr_draw = _draw_qr(qr_matrix, right_x + col_width - qr_scale * len(qr_matrix) - 12, payment_y + payment_h - 12, qr_scale)
+        qr_draw = _draw_qr(qr_matrix, right_x + col_width - qr_scale * len(qr_matrix) - 12, payment_y + section_height - 12, qr_scale)
     elif qr_data:
-        qr_draw = _draw_rect(right_x + col_width - qr_side - 12, payment_y + payment_h - qr_side - 12, qr_side, qr_side, stroke=True, fill=False) + _draw_text(["QR"], right_x + col_width - qr_side//2 - 8, payment_y + payment_h - qr_side//2 - 12, "/F2", 12)
+        qr_draw = _draw_rect(right_x + col_width - qr_side - 12, payment_y + section_height - qr_side - 12, qr_side, qr_side, stroke=True, fill=False) + _draw_text(["QR"], right_x + col_width - qr_side//2 - 8, payment_y + section_height - qr_side//2 - 12, "/F2", 12)
     content_parts.append(qr_draw)
 
-    # Totals block under payment/QR
-    totals_y = payment_y - 60  # posun vyssie
-    # Totals mini-table: show current totals, and separately show original services total (bez balika).
-    totals_lines = [
-        ("Cena bez DPH", total_no_vat, None),
-        (f"DPH ({int(vat_rate*100)}%)", vat_value, None),
-        ("Spolu s DPH", total_with_vat, None),
-    ]
-    box_w = 240
-    box_h = 120
-    totals_box_y = totals_y - 70
-    content_parts.append(_draw_rect(right_x + 6, totals_box_y, box_w, box_h, stroke=True, fill=False))
-    # Top note: original services total without the package.
+    # Totals block (Suvaha)
+    totals_y = client_y  # align with client top
     orig_services_total = float(totals.get("original_services_total", orig_extras) or 0.0)
-    content_parts.append(f"{muted} rg {muted} RG ")
+    summary_lines = invoice_payload.get("summary_lines_override") or [
+        f"Povodna cena sluzieb: {_format_currency(orig_services_total)}",
+        f"Cena bez DPH: {_format_currency(total_no_vat)}",
+        f"DPH ({int(vat_rate*100)}%): {_format_currency(vat_value)}",
+        f"Spolu s DPH: {_format_currency(total_with_vat)}",
+    ]
+    content_parts.append(_draw_rect(right_x, totals_y, col_width, section_height, stroke=True, fill=False))
+    content_parts.append(_draw_text(["Suvaha"], right_x + 12, totals_y + section_height - 16, "/F2", section_header_size, leading=section_header_size + 1))
     content_parts.append(
-        _draw_text(
-            [f"Povodna cena sluzieb (bez balika): {_format_currency(orig_services_total)}"],
-            right_x + 16,
-            totals_box_y + box_h - 14,
+        _draw_summary_lines(
+            summary_lines,
+            right_x + 12,
+            totals_y + section_height - 32,
+            "/F2",
+            section_header_size,
             "/F1",
-            8,
+            section_body_size,
         )
     )
-    content_parts.append("0 0 0 rg 0 0 0 RG ")
-
-    row_y = totals_box_y + box_h - 34
-    for label, val, orig in totals_lines:
-        content_parts.append(_draw_total_row(label, val, orig, right_x + 16, row_y))
-        row_y -= 30
-
 
     # Items table header
     table_header_y = client_y - 40
@@ -696,9 +795,10 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
     for hx, text in zip(col_x, headers):
         content_parts.append(_draw_text([text], hx, table_header_y + 20, "/F2", 10))
 
-    # Item rows
+    # Item rows (use uniform row height so package and services align)
     row_y = table_header_y - 26
-    available_rows = max(1, int((row_y - (card_y + 36)) / 32))
+    row_height = 36
+    available_rows = max(1, int((row_y - (card_y + 36)) / row_height))
     extra_items = []
     table_items = list(display_items)
     if len(table_items) > available_rows:
@@ -750,8 +850,7 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
 
     for idx, item in enumerate(table_items):
         total_no_vat, total_with_vat, orig_no_vat, orig_with_vat = _line_totals(item)
-        has_strike = (orig_no_vat is not None and abs(orig_no_vat - total_no_vat) > 0.01) or (orig_with_vat is not None and abs(orig_with_vat - total_with_vat) > 0.01)
-        rh = 26 if not has_strike else 36
+        rh = row_height
         if idx % 2 == 0:
             content_parts.append(f"{row_alt} rg ")
             content_parts.append(_draw_rect(table_x, row_y, table_w, rh, stroke=False, fill=True))
@@ -782,7 +881,7 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
         next_items = extra_items
         extra_items = []
         row_y = page_h - 80
-        available_rows_page = max(1, int((row_y - 60) / 32))
+        available_rows_page = max(1, int((row_y - 60) / row_height))
         if len(next_items) > available_rows_page:
             extra_items = next_items[available_rows_page - 1 :]
             next_items = next_items[: available_rows_page - 1]
@@ -795,8 +894,7 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
         row_y -= 26
         for idx, item in enumerate(next_items):
             total_no_vat, total_with_vat, orig_no_vat, orig_with_vat = _line_totals(item)
-            has_strike = (orig_no_vat is not None and abs(orig_no_vat - total_no_vat) > 0.01) or (orig_with_vat is not None and abs(orig_with_vat - total_with_vat) > 0.01)
-            rh = 26 if not has_strike else 36
+            rh = row_height
             if idx % 2 == 0:
                 content_parts_extra.append(f"{row_alt} rg ")
                 content_parts_extra.append(_draw_rect(table_x, row_y, table_w, rh, stroke=False, fill=True))

@@ -10,9 +10,19 @@ class FilterDialog(ctk.CTkToplevel):
     Modal dialog for tag/source filtering.
     """
 
-    def __init__(self, master: tk.Misc, tags: Iterable[str], sources: Iterable[str], selected_tags: Set[str], selected_sources: Set[str], on_apply):
+    def __init__(
+        self,
+        master: tk.Misc,
+        tags: Iterable[str],
+        sources: Iterable[str],
+        selected_tags: Set[str],
+        selected_sources: Set[str],
+        on_apply,
+        firm_name: str = "",
+    ):
         super().__init__(master)
-        self.title("Filter")
+        suffix = f" - {firm_name}" if firm_name else ""
+        self.title(f"Filter{suffix}")
         self.transient(master)
         self.grab_set()
         self.minsize(420, 320)

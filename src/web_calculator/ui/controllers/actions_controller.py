@@ -6,7 +6,12 @@ from tkinter import filedialog, messagebox
 
 from web_calculator.core.services.invoice import build_invoice_payload
 from web_calculator.core.services.catalog import save_packages, save_catalog
-from web_calculator.utils.pdf import export_simple_pdf
+from web_calculator.core.services.pdf_content import load_pdf_content, save_pdf_content
+from web_calculator.ui.components.pdf_export_dialog import PdfExportDialog
+from web_calculator.ui.components.pdf_content_dialog import PdfContentDialog
+from web_calculator.utils.pdf_quote import export_quote_pdf
+from web_calculator.utils.pdf_proforma import export_proforma_pdf
+from web_calculator.utils.pdf_invoice import export_invoice_pdf
 
 
 class ActionsController:
@@ -17,6 +22,7 @@ class ActionsController:
 
     def __init__(self, window) -> None:
         self.w = window
+        self._pdf_content = load_pdf_content()
 
     # --- UI helpers ---
     def update_save_buttons(self) -> None:
@@ -46,6 +52,8 @@ class ActionsController:
             "client": client,
             "discount_pct": self.w._discount_pct,
             "price_mode": getattr(self.w, "_price_mode", "base"),
+            "vat_rate": getattr(self.w, "_vat_rate", 0.23),
+            "vat_mode": getattr(self.w, "_vat_mode", "add"),
         }
         path.write(json.dumps(data, ensure_ascii=False, indent=2))
         path.close()
@@ -69,24 +77,130 @@ class ActionsController:
         self.w._selected_services = set(data.get("services", []))
         self.w._service_qty = data.get("quantities", {code: 1 for code in self.w._selected_services})
         self.w._discount_pct = float(data.get("discount_pct", 0.0) or 0.0)
+        self.w._vat_rate = float(data.get("vat_rate", getattr(self.w, "_vat_rate", 0.23)) or 0.0)
+        self.w._vat_mode = str(data.get("vat_mode", getattr(self.w, "_vat_mode", "add")) or "add")
         self.w.set_client_data(data.get("client", {}))
         self.w.service_area.refresh_selection(self.w._selected_services, self.w._service_qty)
         self.w._services.update_summary()
         self.update_save_buttons()
 
     def export_pdf(self) -> None:
+        PdfExportDialog(self.w, on_select=self._export_pdf_with_type, on_edit=self._open_pdf_content_editor, firm_name=self.w._supplier_display_name())
+
+    def _open_pdf_content_editor(self, doc_type: str) -> None:
+        data = self._pdf_content.get(doc_type, {})
+        supplier_fields = self.w.supplier_fields()
+        supplier_options = []
+        for f in supplier_fields:
+            code = f.get("code") or f.get("label") or ""
+            label = f.get("label") or f.get("code") or ""
+            value = f.get("value") or ""
+            if code or label or value:
+                supplier_options.append((code, label, value))
+
+        payload_preview = self._build_payload_for_preview(doc_type)
+        totals = payload_preview.get("totals", {}) if payload_preview else {}
+        fmt = self.w._pricing.format_currency
+        payment_options = [
+            ("vs", "Variabilny symbol", str(payload_preview.get("invoice_no", ""))),
+            ("issue_date", "Datum vystavenia", str(payload_preview.get("issue_date", ""))),
+            ("package", "Balik", str(payload_preview.get("package", ""))),
+            ("status", "Stav", "Nezaplateny"),
+            ("extra", "Extra", ""),
+        ]
+
+        summary_options = [
+            ("orig_services_no_vat", "Povodna cena sluzieb bez DPH", fmt(totals.get("original_services_total", 0))),
+            ("total_no_vat", "Cena bez DPH", fmt(totals.get("total_no_vat", 0))),
+            ("vat", "DPH", fmt(totals.get("vat", 0))),
+            ("total_with_vat", "Spolu s DPH", fmt(totals.get("total_with_vat", 0))),
+            ("orig_services_with_vat", "Povodna cena sluzieb s DPH", fmt((totals.get("original_services_total", 0) or 0) * (1 + totals.get("vat_rate", 0)))),
+        ]
+
+        client = self.w.client_data()
+        client_options = []
+        def add_client_opt(code, label, value):
+            if value:
+                client_options.append((code, label, value))
+        add_client_opt("name", "Meno", client.get("name", ""))
+        add_client_opt("email", "Email", client.get("email", ""))
+        add_client_opt("address", "Adresa", client.get("address", ""))
+        add_client_opt("phone", "Mobil", client.get("phone", "") or client.get("mobile", ""))
+        add_client_opt("company", "Nazov odberatela", client.get("company", ""))
+        add_client_opt("ico", "ICO", client.get("ico", ""))
+        add_client_opt("dic", "DIC", client.get("dic", ""))
+        add_client_opt("icdph", "IC DPH", client.get("icdph", ""))
+
+        available_sections = {
+            "supplier_lines": supplier_options,
+            "payment_lines": payment_options,
+            "client_lines": client_options,
+            "summary_lines": summary_options,
+        }
+
+        def save_data(new_data: dict) -> None:
+            self._pdf_content[doc_type] = new_data
+            save_pdf_content(self._pdf_content)
+
+        PdfContentDialog(
+            self.w,
+            doc_type=doc_type,
+            data=data,
+            on_save=save_data,
+            available_fields=available_sections,
+            firm_name=self.w._supplier_display_name(),
+        )
+
+    def _export_pdf_with_type(self, doc_type: str) -> None:
         if not self.w.has_client_data():
             messagebox.showwarning("Export PDF", "Vypln aspon jeden udaj o klientovi alebo firme.")
             return
+        doc_map = {
+            "quote": ("Cenova ponuka", export_quote_pdf, "ponuka"),
+            "proforma": ("Predfaktura", export_proforma_pdf, "predfaktura"),
+            "invoice": ("Faktura", export_invoice_pdf, "faktura"),
+        }
+        title, exporter, default_name = doc_map.get(doc_type, doc_map["quote"])
         path = filedialog.asksaveasfilename(
             defaultextension=".pdf",
             filetypes=[("PDF", "*.pdf"), ("All files", "*.*")],
-            title="Export do PDF",
+            title=title,
+            initialfile=f"{default_name}.pdf",
         )
         if not path:
             return
         out_path = Path(path)
 
+        payload = self._build_payload_for_preview(doc_type, title=title)
+        if payload is None:
+            return
+        # apply per-document overrides for freeform text sections
+        overrides = self._pdf_content.get(doc_type, {})
+        if overrides:
+            payload["supplier_lines_override"] = overrides.get("supplier_lines", [])
+            payload["payment_lines_override"] = overrides.get("payment_lines", [])
+            payload["client_lines_override"] = overrides.get("client_lines", [])
+            payload["summary_lines_override"] = overrides.get("summary_lines", [])
+        try:
+            total_with_vat = payload.get("totals", {}).get("total_with_vat", 0)
+            payload["qr_data"] = f"{title}:{payload.get('invoice_no','')}:SUMA{total_with_vat}"
+        except Exception:
+            pass
+        try:
+            exporter(out_path, payload)
+        except PermissionError:
+            messagebox.showerror(
+                title,
+                "Export zlyhal: subor je pravdepodobne otvoreny alebo zamknuty.\n"
+                "Zatvor PDF prehliadac alebo zvol iny nazov umiestnenia a skus znova.",
+            )
+            return
+        except Exception as exc:  # pragma: no cover (UI feedback)
+            messagebox.showerror(title, f"Export zlyhal:\n{exc}")
+            return
+        messagebox.showinfo(title, f"PDF ulozene:\n{out_path}")
+
+    def _build_payload_for_preview(self, doc_type: str, title: str | None = None) -> dict | None:
         selections = []
         for s in self.w._catalog.services:
             if s.code not in self.w._selected_services:
@@ -101,29 +215,20 @@ class ActionsController:
             selections,
             self.w.client_data(),
             self.w._pricing,
+            supplier=self.w.supplier_data(),
+            vat_rate=self.w._vat_rate,
+            vat_mode=self.w._vat_mode,
             discount_pct=self.w._discount_pct,
+            doc_title=title or doc_type,
             original_package_price=self.w._current_package_raw.base_price if self.w._current_package_raw else None,
         )
-        try:
-            export_simple_pdf(out_path, payload)
-        except PermissionError:
-            messagebox.showerror(
-                "Export PDF",
-                "Export zlyhal: subor je pravdepodobne otvoreny alebo zamknuty.\n"
-                "Zatvor PDF prehliadac alebo zvol iny nazov umiestnenia a skus znova.",
-            )
-            return
-        except Exception as exc:  # pragma: no cover (UI feedback)
-            messagebox.showerror("Export PDF", f"Export zlyhal:\n{exc}")
-            return
-        messagebox.showinfo("Export PDF", f"PDF ulozene:\n{out_path}")
+        return payload
 
     def reset_selection(self) -> None:
         self.w._selected_services.clear()
         self.w._current_package = None
         self.w._current_package_raw = None
         self.w._service_qty = {s.code: 1 for s in self.w._catalog.services}
-        self.w.reset_client_data()
         self.w._discount_pct = 0.0
         self.w.package_selector.select_none()
         self.w.service_area.refresh_selection(self.w._selected_services, self.w._service_qty)
