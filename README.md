@@ -26,7 +26,7 @@ A desktop pricing calculator for website and e-shop projects. Built with Python 
 - `src/web_calculator/app.py` - entry point.
 - `core/` - pricing engine, models, catalog loader (JSON only), invoice payload builder, supplier/pdf-content services.
 - `ui/` - Tkinter layout components and controllers (`service_controller`, `actions_controller`); dialogs for supplier, PDF export/content, search/filter/preview.
-- `utils/` - PDF renderer (`pdf.py` + wrappers `pdf_quote/proforma/invoice`), variable symbol generator, optional QR helper.
+- `utils/` - PDF renderer (core + renderers + `utils/pdf/exports` pre quote/proforma/invoice), variable symbol generator, optional QR helper.
 
 
 ## Running

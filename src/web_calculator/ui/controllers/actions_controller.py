@@ -9,9 +9,7 @@ from web_calculator.core.services.catalog import save_packages, save_catalog
 from web_calculator.core.services.pdf_content import load_pdf_content, save_pdf_content
 from web_calculator.ui.components.pdf_export_dialog import PdfExportDialog
 from web_calculator.ui.components.pdf_content_dialog import PdfContentDialog
-from web_calculator.utils.pdf_quote import export_quote_pdf
-from web_calculator.utils.pdf_proforma import export_proforma_pdf
-from web_calculator.utils.pdf_invoice import export_invoice_pdf
+from web_calculator.utils.pdf.exports import export_quote_pdf, export_proforma_pdf, export_invoice_pdf
 
 
 class ActionsController:
@@ -91,7 +89,7 @@ class ActionsController:
         payload_preview = self._build_payload_for_preview(doc_type)
         if payload_preview is None:
             return
-        data = self._build_section_defaults(doc_type, payload_preview)
+        data = self._build_section_content(doc_type, payload_preview)
         supplier_fields = self.w.supplier_fields()
         supplier_options = []
         for f in supplier_fields:
@@ -178,7 +176,7 @@ class ActionsController:
         if payload is None:
             return
         # apply per-document overrides for freeform text sections
-        defaults = self._build_section_defaults(doc_type, payload)
+        defaults = self._build_section_content(doc_type, payload)
         payload["supplier_lines_override"] = defaults.get("supplier_lines", [])
         payload["payment_lines_override"] = defaults.get("payment_lines", [])
         payload["client_lines_override"] = defaults.get("client_lines", [])
@@ -278,6 +276,21 @@ class ActionsController:
             "client_lines": client_lines,
             "summary_lines": summary_lines,
         }
+
+    def _build_section_content(self, doc_type: str, payload: dict) -> dict:
+        """
+        Combine ulozene uzivatelske upravy s defaultmi.
+        Ak uzivatel odstrani nejaky riadok (napr. IBAN), ponechame prazdny zoznam a neregenerujeme ho z defaultov.
+        """
+        defaults = self._build_section_defaults(doc_type, payload)
+        saved = self._pdf_content.get(doc_type, {}) or {}
+        result: dict[str, list[str]] = {}
+        for key, def_lines in defaults.items():
+            if key in saved:
+                result[key] = list(saved.get(key) or [])
+            else:
+                result[key] = def_lines
+        return result
 
     def reset_selection(self) -> None:
         self.w._selected_services.clear()

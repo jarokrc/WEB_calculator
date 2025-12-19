@@ -1,6 +1,8 @@
 """
-PDF export: original light layout with strike-through original prices.
-Minimal implementation (no external deps).
+Tento skript slúži len ako poistka: ak nový renderer spadne, fallback sa spúšťa z
+`renderers/pdf_renderer.py` (blok try/except vola `legacy.export_simple_pdf`).
+This module is only a cold fallback: the exception handler in `renderers/pdf_renderer.py`
+calls `legacy.export_simple_pdf` when the new pipeline fails.
 """
 
 from __future__ import annotations
@@ -372,7 +374,7 @@ def _draw_total_row(label: str, value: float, orig: float | None, x: int, y: int
     #     color = "0.55 0.55 0.55"
     #     size = 10
     #     parts.append(f"{color} rg {color} RG ")
-    #     orig_text = f"Pôvodná {label}: {_format_currency(orig)}"
+    #     orig_text = f"P├┤vodn├í {label}: {_format_currency(orig)}"
     #     parts.append(_draw_text([orig_text], x, y + size + 6, "/F1", size))
     #     strike_len = len(orig_text) * (size * 0.52)
     #     line_y = y + size + 6 + size * 0.3
@@ -538,7 +540,7 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
 
     invoice_no = str(invoice_payload.get("invoice_no", "-"))
     issue_date = str(invoice_payload.get("issue_date", ""))
-    title = invoice_payload.get("doc_title", "Cenová ponuka")
+    title = invoice_payload.get("doc_title", "Cenov├í ponuka")
     supplier = invoice_payload.get("supplier", {})
     client = invoice_payload.get("client", {})
     totals = invoice_payload.get("totals", {})
@@ -595,7 +597,7 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
     # Header
     header_y = card_top - 18
     content_parts.append(_draw_text([f"{title} c. {invoice_no}"], card_x + 16, header_y, "/F2", 18))
-    content_parts.append(_draw_text([f"Dátum vystavenia: {issue_date}"], card_x + 16, header_y - 20, "/F1", 11))
+    content_parts.append(_draw_text([f"D├ítum vystavenia: {issue_date}"], card_x + 16, header_y - 20, "/F1", 11))
 
     # Totals helpers
     vat_rate = float(totals.get("vat_rate", 0.23))
@@ -791,7 +793,7 @@ def export_simple_pdf(path: Path, invoice_payload: Mapping) -> None:
     content_parts.append(_draw_rect(table_x, table_header_y, table_w, 30, stroke=True, fill=True))
     content_parts.append("1 1 1 rg 1 1 1 RG ")
     col_x = [table_x + 10, table_x + 220, table_x + 320, table_x + 420]
-    headers = ["Názov", "Množstvo", "bez DPH", "s DPH"]
+    headers = ["N├ízov", "Mno┼żstvo", "bez DPH", "s DPH"]
     for hx, text in zip(col_x, headers):
         content_parts.append(_draw_text([text], hx, table_header_y + 20, "/F2", 10))
 
