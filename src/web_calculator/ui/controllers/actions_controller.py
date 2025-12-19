@@ -88,7 +88,10 @@ class ActionsController:
         PdfExportDialog(self.w, on_select=self._export_pdf_with_type, on_edit=self._open_pdf_content_editor, firm_name=self.w._supplier_display_name())
 
     def _open_pdf_content_editor(self, doc_type: str) -> None:
-        data = self._pdf_content.get(doc_type, {})
+        payload_preview = self._build_payload_for_preview(doc_type)
+        if payload_preview is None:
+            return
+        data = self._build_section_defaults(doc_type, payload_preview)
         supplier_fields = self.w.supplier_fields()
         supplier_options = []
         for f in supplier_fields:
@@ -175,12 +178,11 @@ class ActionsController:
         if payload is None:
             return
         # apply per-document overrides for freeform text sections
-        overrides = self._pdf_content.get(doc_type, {})
-        if overrides:
-            payload["supplier_lines_override"] = overrides.get("supplier_lines", [])
-            payload["payment_lines_override"] = overrides.get("payment_lines", [])
-            payload["client_lines_override"] = overrides.get("client_lines", [])
-            payload["summary_lines_override"] = overrides.get("summary_lines", [])
+        defaults = self._build_section_defaults(doc_type, payload)
+        payload["supplier_lines_override"] = defaults.get("supplier_lines", [])
+        payload["payment_lines_override"] = defaults.get("payment_lines", [])
+        payload["client_lines_override"] = defaults.get("client_lines", [])
+        payload["summary_lines_override"] = defaults.get("summary_lines", [])
         try:
             total_with_vat = payload.get("totals", {}).get("total_with_vat", 0)
             payload["qr_data"] = f"{title}:{payload.get('invoice_no','')}:SUMA{total_with_vat}"
@@ -223,6 +225,59 @@ class ActionsController:
             original_package_price=self.w._current_package_raw.base_price if self.w._current_package_raw else None,
         )
         return payload
+
+    def _build_section_defaults(self, doc_type: str, payload: dict) -> dict:
+        fmt = self.w._pricing.format_currency
+        supplier_lines: list[str] = []
+        for f in self.w.supplier_fields():
+            label = (f.get("label") or f.get("code") or "").strip()
+            val = (f.get("value") or "").strip()
+            if label and val:
+                supplier_lines.append(f"{label} {val}")
+            elif label:
+                supplier_lines.append(label)
+
+        invoice_no = payload.get("invoice_no", "")
+        issue_date = payload.get("issue_date", "")
+        package_label = payload.get("package", "-") or "-"
+        payment_lines = [
+            f"Variabilny symbol: {invoice_no}",
+            f"Datum vystavenia: {issue_date}",
+            f"Balik: {package_label}",
+            "Stav: Nezaplateny",
+        ]
+
+        client = payload.get("client", {}) or {}
+        client_lines = []
+        def add_client_line(label: str, value: str) -> None:
+            if value:
+                client_lines.append(f"{label}: {value}")
+        add_client_line("Meno", client.get("name", ""))
+        add_client_line("Email", client.get("email", ""))
+        add_client_line("Adresa", client.get("address", ""))
+        add_client_line("ICO", client.get("ico", ""))
+        add_client_line("DIC", client.get("dic", ""))
+        add_client_line("IC DPH", client.get("icdph", ""))
+
+        totals = payload.get("totals", {}) or {}
+        vat_rate = totals.get("vat_rate", 0.0) or 0.0
+        orig_services_total = totals.get("original_services_total", 0.0) or 0.0
+        total_no_vat = totals.get("total_no_vat", 0.0) or 0.0
+        vat_val = totals.get("vat", 0.0) or 0.0
+        total_with_vat = totals.get("total_with_vat", 0.0) or 0.0
+        summary_lines = [
+            f"Povodna cena sluzieb: {fmt(orig_services_total)}",
+            f"Cena bez DPH: {fmt(total_no_vat)}",
+            f"DPH ({int(vat_rate*100)}%): {fmt(vat_val)}",
+            f"Spolu s DPH: {fmt(total_with_vat)}",
+        ]
+
+        return {
+            "supplier_lines": supplier_lines,
+            "payment_lines": payment_lines,
+            "client_lines": client_lines,
+            "summary_lines": summary_lines,
+        }
 
     def reset_selection(self) -> None:
         self.w._selected_services.clear()
