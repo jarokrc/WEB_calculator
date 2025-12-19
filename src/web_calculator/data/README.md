@@ -1,9 +1,9 @@
-# Štruktúra dát pre WEB kalkulačku
+# Struktura dat pre WEB kalkulacku
 
-- `packages.json` – balíky (kód, názov, popis, cena, included_services).
-- `services_web.json` – webové služby/doplnky (vrátane `bundle` a `price2`).
-- `services_eshop.json` – e‑shop služby/doplnky (vrátane `bundle` a `price2`).
-- `catalog.json` – len balíky; ponechaný ako fallback kombinovaný súbor (pole `services` prázdne).
-- `cennik_webu.xlsx` – zdrojový Excel (sheet `_DATA`) pre pôvodné texty a ceny.
-
-Loader preferuje split súbory (`packages.json`, `services_web.json`, `services_eshop.json`); ak chýbajú, použije `catalog.json`, a napokon Excel.
+- `packages.json` - baliky (kod, nazov, popis, ceny `base/promo/intra`, `included_services`, `included_quantities`).
+- `services_web.json` - webove sluzby/doplnky (zdroj `WEB`, vratane `bundle` a `price2`).
+- `services_eshop.json` - e-shop sluzby/doplnky (zdroj `ESHOP`, vratane `bundle` a `price2`).
+- `services_primary.json` - primarne sluzby (zdroj `PRIMARY`); volitelne `services_extra.json`.
+- `supplier.json` - firemne profily: `{"active": "id", "profiles": [{"id","name","fields":[{"code","label","value"}]}], "sources":[{"code","label"}]}`.
+- `pdf_content.json` - texty sekcii PDF pre kazdy typ dokumentu (`quote/proforma/invoice`): polia `supplier_lines`, `payment_lines`, `client_lines`, `summary_lines`.
+- Historicke zdroje: `catalog.json` a `cennik_webu.xlsx` (sheet `_DATA`) len ako backup/import; runtime pouziva split JSON.
