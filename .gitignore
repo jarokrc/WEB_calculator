@@ -51,3 +51,6 @@ WEB_calculator/src/web_calculator/data/*.xlsx
 WEB_calculator/src/web_calculator/data/*
 !WEB_calculator/src/web_calculator/data/README.md
 WEB_calculator/docs/*
+
+# PyInstaller spec files
+*.spec
