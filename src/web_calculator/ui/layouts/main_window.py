@@ -24,8 +24,22 @@ class MainWindow(ctk.CTk):
         self._theme_name = "dark_futuristic"
         self._palette = theme.apply_theme(self, self._theme_name)
         self.title("WEB kalkulacka")
-        self.geometry("1024x780")
-        self.minsize(900, 650)
+        # Minimalne rozmery, na ktore mozno zmensit okno (pri presunoch/resize),
+        # nasledne sa aj tak po 3s maximalizuje na aktualny monitor.
+        self._base_min_w, self._base_min_h = 800, 600
+        screen_w, screen_h = self.winfo_screenwidth(), self.winfo_screenheight()
+        min_w, min_h = min(self._base_min_w, screen_w), min(self._base_min_h, screen_h)
+        self.geometry(f"{min_w}x{min_h}+0+0")
+        self.minsize(min_w, min_h)
+        # Povolit resize, ale po pauze sa okno samo maximalizuje na dany monitor.
+        self.resizable(True, True)
+        self._current_monitor = None
+        self._fit_after_id: str | None = None
+        self._last_full_size: tuple[int, int] | None = None
+        self._shrunk_on_normal = False
+        self._suppress_fit = False
+        # Spusti okno maximalizovane, aby sa zobrazili vsetky ovladace a mali priestor.
+        self.after(0, self._maximize_window)
         self._catalog = catalog
         self._pricing = PricingEngine()
         self._selected_services: Set[str] = set()
@@ -106,6 +120,20 @@ class MainWindow(ctk.CTk):
         self.package_selector.select_none()
         self._update_save_buttons()
         self._update_title()
+
+    def _maximize_window(self) -> None:
+        """Try to maximize; fallback to full screen size if zoomed is unsupported."""
+        try:
+            self.state("zoomed")
+        except Exception:
+            try:
+                w, h = self.winfo_screenwidth(), self.winfo_screenheight()
+                self.geometry(f"{w}x{h}+0+0")
+            except Exception:
+                pass
+        # Bind to monitor changes (window moves) to refit to the target display.
+        self.bind("<Configure>", self._on_configure_monitor, add="+")
+        self._fit_to_monitor_fullscreen(force=True)
 
     def _open_package_edit_dialog(self, package: Package) -> None:
         dialog = ctk.CTkToplevel(self)
@@ -424,3 +452,88 @@ class MainWindow(ctk.CTk):
 
     def _update_title(self) -> None:
         self.title(f"{self._title_base} - {self._supplier_display_name()}")
+
+    # --- Monitor-aware sizing ---
+    def _on_configure_monitor(self, _event=None) -> None:
+        if self._suppress_fit:
+            return
+        # Debounce auto-fit; po 3s nečinnosti sa prispôsobí aktuálnemu monitoru a maximalizuje sa.
+        if self.state() == "normal" and not self._shrunk_on_normal:
+            info = self._get_monitor_info()
+            work_w = info[3] if info else self.winfo_screenwidth()
+            work_h = info[4] if info else self.winfo_screenheight()
+            base_w = self._last_full_size[0] if self._last_full_size else self.winfo_width()
+            base_h = self._last_full_size[1] if self._last_full_size else self.winfo_height()
+            shrink_w = max(self._base_min_w, min(work_w, max(1, base_w // 2)))
+            shrink_h = max(self._base_min_h, min(work_h, max(1, base_h // 2)))
+            try:
+                cur_x, cur_y = self.winfo_rootx(), self.winfo_rooty()
+                self.geometry(f"{shrink_w}x{shrink_h}+{cur_x}+{cur_y}")
+            except Exception:
+                self.geometry(f"{shrink_w}x{shrink_h}")
+            self._shrunk_on_normal = True
+
+        if self._fit_after_id:
+            self.after_cancel(self._fit_after_id)
+        self._fit_after_id = self.after(3000, lambda: self._fit_to_monitor_fullscreen(force=True))
+
+    def _fit_to_monitor_fullscreen(self, force: bool = False) -> None:
+        """Fit window to current monitor's work area. Uses full work area and updates minsize."""
+        self._fit_after_id = None
+        info = self._get_monitor_info()
+        if not info:
+            return
+        hmon, left, top, work_w, work_h = info
+        if not force and hmon == getattr(self, "_current_monitor", None):
+            return
+        self._current_monitor = hmon
+        min_w = min(self._base_min_w, work_w)
+        min_h = min(self._base_min_h, work_h)
+        self.minsize(min_w, min_h)
+        self._shrunk_on_normal = False
+        # Account for window decorations (title bar/borders) so obsah neprekrýva taskbar.
+        self.update_idletasks()
+        border = max(0, self.winfo_rootx() - self.winfo_x())
+        title = max(0, self.winfo_rooty() - self.winfo_y())
+        extra_w = border * 2
+        extra_h = title + border  # aproximácia pre spodný okraj
+        adj_w = max(min_w, work_w - extra_w)
+        adj_h = max(min_h, work_h - extra_h)
+        self._suppress_fit = True
+        try:
+            self.geometry(f"{adj_w}x{adj_h}+{left}+{top}")
+            try:
+                self.state("zoomed")
+            except Exception:
+                pass
+        finally:
+            self._suppress_fit = False
+        self._last_full_size = (adj_w, adj_h)
+
+    def _get_monitor_info(self):
+        """Return (handle, left, top, work_w, work_h) for the monitor under the window center (Windows only)."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+            MONITOR_DEFAULTTONEAREST = 2
+
+            class RECT(ctypes.Structure):
+                _fields_ = [("left", wintypes.LONG), ("top", wintypes.LONG), ("right", wintypes.LONG), ("bottom", wintypes.LONG)]
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", RECT), ("rcWork", RECT), ("dwFlags", wintypes.DWORD)]
+
+            x = self.winfo_rootx() + self.winfo_width() // 2
+            y = self.winfo_rooty() + self.winfo_height() // 2
+            hmon = user32.MonitorFromPoint(wintypes.POINT(x, y), MONITOR_DEFAULTTONEAREST)
+            mi = MONITORINFO()
+            mi.cbSize = ctypes.sizeof(MONITORINFO)
+            if not user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                return None
+            work_w = mi.rcWork.right - mi.rcWork.left
+            work_h = mi.rcWork.bottom - mi.rcWork.top
+            return hmon, mi.rcWork.left, mi.rcWork.top, work_w, work_h
+        except Exception:
+            return None

@@ -246,16 +246,17 @@ class ActionsController:
         ]
 
         client = payload.get("client", {}) or {}
-        client_lines = []
-        def add_client_line(label: str, value: str) -> None:
-            if value:
-                client_lines.append(f"{label}: {value}")
-        add_client_line("Meno", client.get("name", ""))
-        add_client_line("Email", client.get("email", ""))
-        add_client_line("Adresa", client.get("address", ""))
-        add_client_line("ICO", client.get("ico", ""))
-        add_client_line("DIC", client.get("dic", ""))
-        add_client_line("IC DPH", client.get("icdph", ""))
+        client_lines: list[str] = []
+        def add_client_line(value: str) -> None:
+            val = (value or "").strip()
+            if val:
+                client_lines.append(val)
+        add_client_line(client.get("name", ""))
+        add_client_line(client.get("email", ""))
+        add_client_line(client.get("address", ""))
+        add_client_line(client.get("ico", ""))
+        add_client_line(client.get("dic", ""))
+        add_client_line(client.get("icdph", ""))
 
         totals = payload.get("totals", {}) or {}
         vat_rate = totals.get("vat_rate", 0.0) or 0.0
@@ -281,12 +282,16 @@ class ActionsController:
         """
         Combine ulozene uzivatelske upravy s defaultmi.
         Ak uzivatel odstrani nejaky riadok (napr. IBAN), ponechame prazdny zoznam a neregenerujeme ho z defaultov.
+        Pre citlive sekcie (client_lines, payment_lines) vsak berieme vzdy cerstve defaulty,
+        aby sa nezobrazovali stare udaje pri zmene klienta alebo VS.
         """
         defaults = self._build_section_defaults(doc_type, payload)
         saved = self._pdf_content.get(doc_type, {}) or {}
         result: dict[str, list[str]] = {}
         for key, def_lines in defaults.items():
-            if key in saved:
+            if key in ("client_lines", "payment_lines", "summary_lines"):
+                result[key] = def_lines
+            elif key in saved:
                 result[key] = list(saved.get(key) or [])
             else:
                 result[key] = def_lines

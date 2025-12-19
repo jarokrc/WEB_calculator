@@ -19,6 +19,7 @@
   - Suvaha: `summary_lines_override` alebo `build_summary_lines` (pouziva `TotalsContext/derive_totals` a `format_currency` z `core/totals.py`).
 - Polozky: `prepare_display_items` prida synteticky riadok balika ak ma cenu a prepoita povodne extras; tabulka cez `sections/items_table` (overflow na dalsie stranky).
 - Builder: `core/builder.build_pdf_bytes` sklada obsah a fonty, vytvori PDF.
+- Layout: stlpce a sekcie su bez medzier (`COL_GAP=0`, `SECTION_GAP=0`), aby okraje susediacich blokov lícovali.
 
 ## Co este zostava (odstrihnut legacy)
 - Legacy nechavame ako studeny fallback; nove moduly na neho neviazeme, spusti sa len pri chybe renderera.

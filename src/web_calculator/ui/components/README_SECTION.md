@@ -1,0 +1,13 @@
+# ui/components
+- `client_dialog.py`: dialog for client data entry/edit.
+- `filter_dialog.py`: dialog for filtering services.
+- `package_selector.py`: control for selecting packages and pricing mode.
+- `pdf_content_dialog.py`: editor for PDF section lines (supplier/payment/client/summary) with insertable field options.
+- `pdf_export_dialog.py`: dialog to choose PDF export type (quote/proforma/invoice).
+- `preview_dialog.py`: generic preview popup.
+- `search_dialog.py`: search UI for services.
+- `service_editor_window.py`: editor for a single service item.
+- `service_table.py`: table/grid for displaying services; formatting quantities/prices.
+- `summary_panel.py`: shows selected services summary and totals.
+- `supplier_dialog.py`: dialog for supplier profile.
+- `__init__.py`: package marker.

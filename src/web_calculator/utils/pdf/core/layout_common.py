@@ -12,10 +12,10 @@ CARD_TOP = CARD_Y + CARD_H
 
 # Section geometry
 SECTION_HEIGHT = 150
-SECTION_GAP = 12
+SECTION_GAP = 0
 SECTION_HEADER_SIZE = 12
 SECTION_BODY_SIZE = 11
-COL_GAP = 16
+COL_GAP = 0
 COL_WIDTH = 248
 
 # Table geometry
@@ -35,4 +35,3 @@ COLORS = {
 
 def color(name: str) -> str:
     return COLORS.get(name, "0 0 0")
-
